@@ -235,19 +235,16 @@ app.post('/generate', (req, res) => {
 app.get('/v/:id', async (req, res) => {
     const linkId = req.params.id;
 
-    // Check if link exists
     db.get(`SELECT target_url FROM links WHERE id = ?`, [linkId], async (err, row) => {
         if (err || !row) {
             return res.status(404).send(`<h3>❌ Link not found</h3><a href="/">← Home</a>`);
         }
 
-        // If the request already has query params (fingerprint data), process it
         if (Object.keys(req.query).length > 0) {
             await processVisit(linkId, row.target_url, req);
             return res.redirect(row.target_url);
         }
 
-        // Otherwise, serve the fingerprint collector page
         res.send(`
             <!DOCTYPE html>
             <html>
@@ -258,24 +255,20 @@ app.get('/v/:id', async (req, res) => {
                         function getDeviceData() {
                             const data = {};
 
-                            // Screen
                             data.sw = screen.width;
                             data.sh = screen.height;
                             data.cd = screen.colorDepth;
                             data.pr = window.devicePixelRatio || 1;
 
-                            // Hardware
                             data.cc = navigator.hardwareConcurrency || 'Unknown';
                             data.ram = navigator.deviceMemory ? navigator.deviceMemory + ' GB' : 'Unknown';
                             data.ts = ('ontouchstart' in window || navigator.maxTouchPoints > 0) ? 'Yes' : 'No';
 
-                            // Advanced
                             data.tz = Intl.DateTimeFormat().resolvedOptions().timeZone || 'Unknown';
                             data.lang = navigator.language || 'Unknown';
                             data.cookies = navigator.cookieEnabled ? 'Yes' : 'No';
                             data.dnt = navigator.doNotTrack || 'Not set';
 
-                            // Canvas fingerprint
                             try {
                                 const canvas = document.createElement('canvas');
                                 canvas.width = 256;
@@ -307,7 +300,6 @@ app.get('/v/:id', async (req, res) => {
                                 data.canvas = 'error';
                             }
 
-                            // Fonts
                             try {
                                 const canvas = document.createElement('canvas');
                                 const ctx = canvas.getContext('2d');
@@ -333,7 +325,6 @@ app.get('/v/:id', async (req, res) => {
                                 data.fonts = '';
                             }
 
-                            // Plugins
                             try {
                                 const plugins = [];
                                 for (let i = 0; i < navigator.plugins.length; i++) {
@@ -344,7 +335,6 @@ app.get('/v/:id', async (req, res) => {
                                 data.plugins = '';
                             }
 
-                            // GPU
                             try {
                                 const canvas = document.createElement('canvas');
                                 const gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
@@ -391,11 +381,9 @@ async function processVisit(linkId, targetUrl, req) {
         ip = '8.8.8.8';
     }
 
-    // Parse user agent
     const parser = new UAParser(userAgent);
     const uaResult = parser.getResult();
 
-    // Geo IP
     let country = 'Unknown', city = 'Unknown', region = 'Unknown', isp = 'Unknown';
     try {
         const geo = await axios.get(`http://ip-api.com/json/${ip}?fields=status,country,city,regionName,isp`, { timeout: 5000 });
@@ -466,7 +454,6 @@ app.get('/results/:trackingId', (req, res) => {
             const botCount = visits.filter(v => v.is_bot === 1).length;
             const humanCount = totalViews - botCount;
 
-            // Traffic source stats
             const sourceStats = visits.reduce((acc, v) => {
                 const src = v.traffic_source || 'Direct';
                 acc[src] = (acc[src] || 0) + 1;
