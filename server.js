@@ -1,5 +1,5 @@
 const express = require('express');
-const { neon } = require('@neondatabase/serverless');
+const { Pool } = require('pg');
 const crypto = require('crypto');
 const requestIp = require('request-ip');
 const axios = require('axios');
@@ -12,22 +12,27 @@ app.use(express.json());
 app.use(requestIp.mw());
 
 // ============================================================
-// DATABASE CONNECTION (SUPABASE via Neon driver)
+// DATABASE CONNECTION (Supabase via pg)
 // ============================================================
-const sql = neon(process.env.DATABASE_URL);
+const pool = new Pool({
+    connectionString: process.env.DATABASE_URL,
+    ssl: {
+        rejectUnauthorized: false
+    }
+});
 
 async function initDatabase() {
     try {
-        await sql`
+        await pool.query(`
             CREATE TABLE IF NOT EXISTS links (
                 id TEXT PRIMARY KEY,
                 target_url TEXT,
                 tracking_id TEXT,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
-        `;
+        `);
 
-        await sql`
+        await pool.query(`
             CREATE TABLE IF NOT EXISTS visits (
                 id SERIAL PRIMARY KEY,
                 link_id TEXT,
@@ -68,7 +73,7 @@ async function initDatabase() {
                 traffic_source TEXT,
                 FOREIGN KEY(link_id) REFERENCES links(id)
             )
-        `;
+        `);
         console.log('✅ Database tables ready');
     } catch (err) {
         console.error('❌ Database init error:', err);
@@ -192,10 +197,10 @@ app.post('/generate', async (req, res) => {
     const protocol = req.protocol;
 
     try {
-        await sql`
-            INSERT INTO links (id, target_url, tracking_id)
-            VALUES (${linkId}, ${targetUrl}, ${trackingId})
-        `;
+        await pool.query(
+            `INSERT INTO links (id, target_url, tracking_id) VALUES ($1, $2, $3)`,
+            [linkId, targetUrl, trackingId]
+        );
 
         res.send(`
             <!DOCTYPE html>
@@ -251,15 +256,16 @@ app.get('/v/:id', async (req, res) => {
     const linkId = req.params.id;
 
     try {
-        const result = await sql`
-            SELECT target_url FROM links WHERE id = ${linkId}
-        `;
+        const result = await pool.query(
+            `SELECT target_url FROM links WHERE id = $1`,
+            [linkId]
+        );
 
-        if (result.length === 0) {
+        if (result.rows.length === 0) {
             return res.status(404).send(`<h3>❌ Link not found</h3><a href="/">← Home</a>`);
         }
 
-        const targetUrl = result[0].target_url;
+        const targetUrl = result.rows[0].target_url;
 
         if (Object.keys(req.query).length > 0) {
             await processVisit(linkId, targetUrl, req);
@@ -431,7 +437,7 @@ async function processVisit(linkId, targetUrl, req) {
     const browserVersion = uaResult.browser.version || 'Unknown';
 
     try {
-        await sql`
+        await pool.query(`
             INSERT INTO visits (
                 link_id, timestamp, ip, country, city, region, isp,
                 user_agent, referer,
@@ -444,18 +450,29 @@ async function processVisit(linkId, targetUrl, req) {
                 webgl_vendor, webgl_renderer,
                 is_bot, bot_name, traffic_source
             ) VALUES (
-                ${linkId}, ${timestamp}, ${ip}, ${country}, ${city}, ${region}, ${isp},
-                ${userAgent}, ${referer},
-                ${osName}, ${osVersion}, ${deviceType}, ${deviceVendor}, ${deviceModel},
-                ${browserName}, ${browserVersion},
-                ${query.cc || 'Unknown'}, ${query.ram || 'Unknown'}, ${query.gpu || 'Unknown'}, ${query.ts || 'Unknown'},
-                ${query.sw || null}, ${query.sh || null}, ${query.cd || null}, ${query.pr || null},
-                ${query.tz || 'Unknown'}, ${query.lang || 'Unknown'}, ${query.cookies || 'Unknown'}, ${query.dnt || 'Unknown'},
-                ${query.canvas || null}, ${query.fonts || null}, ${query.plugins || null},
-                ${query.webgl_vendor || null}, ${query.webgl_renderer || null},
-                ${botInfo.isBot ? 1 : 0}, ${botInfo.botName}, ${trafficSource}
+                $1, $2, $3, $4, $5, $6, $7,
+                $8, $9,
+                $10, $11, $12, $13, $14,
+                $15, $16,
+                $17, $18, $19, $20,
+                $21, $22, $23, $24,
+                $25, $26, $27, $28,
+                $29, $30, $31,
+                $32, $33,
+                $34, $35, $36
             )
-        `;
+        `, [
+            linkId, timestamp, ip, country, city, region, isp,
+            userAgent, referer,
+            osName, osVersion, deviceType, deviceVendor, deviceModel,
+            browserName, browserVersion,
+            query.cc || 'Unknown', query.ram || 'Unknown', query.gpu || 'Unknown', query.ts || 'Unknown',
+            query.sw || null, query.sh || null, query.cd || null, query.pr || null,
+            query.tz || 'Unknown', query.lang || 'Unknown', query.cookies || 'Unknown', query.dnt || 'Unknown',
+            query.canvas || null, query.fonts || null, query.plugins || null,
+            query.webgl_vendor || null, query.webgl_renderer || null,
+            botInfo.isBot ? 1 : 0, botInfo.botName, trafficSource
+        ]);
     } catch (err) {
         console.error('DB insert error:', err);
     }
@@ -468,21 +485,23 @@ app.get('/results/:trackingId', async (req, res) => {
     const trackingId = req.params.trackingId;
 
     try {
-        const linkResult = await sql`
-            SELECT id, target_url, created_at FROM links WHERE tracking_id = ${trackingId}
-        `;
+        const linkResult = await pool.query(
+            `SELECT id, target_url, created_at FROM links WHERE tracking_id = $1`,
+            [trackingId]
+        );
 
-        if (linkResult.length === 0) {
+        if (linkResult.rows.length === 0) {
             return res.status(404).send(`<h3>❌ Not found</h3><a href="/">← Home</a>`);
         }
 
-        const link = linkResult[0];
+        const link = linkResult.rows[0];
 
-        const visitsResult = await sql`
-            SELECT * FROM visits WHERE link_id = ${link.id} ORDER BY timestamp DESC
-        `;
+        const visitsResult = await pool.query(
+            `SELECT * FROM visits WHERE link_id = $1 ORDER BY timestamp DESC`,
+            [link.id]
+        );
 
-        const visits = visitsResult;
+        const visits = visitsResult.rows;
 
         const totalViews = visits.length;
         const uniqueIps = new Set(visits.map(v => v.ip)).size;
