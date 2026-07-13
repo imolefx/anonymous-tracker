@@ -12,7 +12,7 @@ app.use(express.json());
 app.use(requestIp.mw());
 
 // ============================================================
-// DATABASE CONNECTION (Neon - NO IPv6 ISSUES)
+// DATABASE CONNECTION
 // ============================================================
 const pool = new Pool({
     connectionString: process.env.DATABASE_URL,
@@ -23,6 +23,7 @@ const pool = new Pool({
 
 async function initDatabase() {
     try {
+        // Links table
         await pool.query(`
             CREATE TABLE IF NOT EXISTS links (
                 id TEXT PRIMARY KEY,
@@ -32,6 +33,7 @@ async function initDatabase() {
             )
         `);
 
+        // Visits table with ALL columns
         await pool.query(`
             CREATE TABLE IF NOT EXISTS visits (
                 id SERIAL PRIMARY KEY,
@@ -74,6 +76,30 @@ async function initDatabase() {
                 FOREIGN KEY(link_id) REFERENCES links(id)
             )
         `);
+
+        // Add any missing columns (for existing databases)
+        const columns = [
+            'webgl_vendor TEXT',
+            'webgl_renderer TEXT',
+            'canvas_hash TEXT',
+            'fonts TEXT',
+            'plugins TEXT',
+            'color_depth TEXT',
+            'pixel_ratio REAL',
+            'touch_support TEXT',
+            'cookies_enabled TEXT',
+            'do_not_track TEXT'
+        ];
+
+        for (const col of columns) {
+            try {
+                await pool.query(`ALTER TABLE visits ADD COLUMN ${col}`);
+                console.log(`✅ Added column: ${col.split(' ')[0]}`);
+            } catch (err) {
+                // Column already exists - ignore
+            }
+        }
+
         console.log('✅ Database tables ready');
     } catch (err) {
         console.error('❌ Database init error:', err);
@@ -83,65 +109,110 @@ async function initDatabase() {
 initDatabase();
 
 // ============================================================
-// HELPERS
+// BOT DETECTION
 // ============================================================
 function detectBot(ua) {
     if (!ua) return { isBot: false, botName: null };
-    const bots = [
-        'Googlebot', 'Bingbot', 'Yahoo! Slurp', 'DuckDuckBot',
-        'facebookexternalhit', 'Facebot', 'Twitterbot', 'LinkedInBot',
-        'Instagram', 'Pinterestbot', 'Slackbot', 'Discordbot',
-        'TelegramBot', 'Applebot', 'Baiduspider', 'YandexBot',
-        'AhrefsBot', 'SemrushBot', 'MJ12bot', 'Screaming Frog',
-        'Pingdom', 'UptimeRobot', 'Site24x7', 'NewRelic',
-        'Cloudflare', 'Headless', 'PhantomJS', 'Selenium',
-        'Puppeteer', 'curl', 'Wget', 'Python-urllib'
-    ];
-    for (const bot of bots) {
-        if (ua.toLowerCase().includes(bot.toLowerCase())) {
-            return { isBot: true, botName: bot };
+
+    const bots = {
+        'Googlebot': ['Googlebot', 'Google-InspectionTool'],
+        'Bingbot': ['bingbot', 'BingPreview'],
+        'Yahoo': ['Yahoo! Slurp', 'YahooSeeker'],
+        'DuckDuckGo': ['DuckDuckBot'],
+        'Facebook': ['facebookexternalhit', 'Facebot'],
+        'Twitter': ['Twitterbot'],
+        'LinkedIn': ['LinkedInBot'],
+        'Instagram': ['Instagram'],
+        'Pinterest': ['Pinterestbot'],
+        'Slack': ['Slackbot'],
+        'Discord': ['Discordbot'],
+        'Telegram': ['TelegramBot'],
+        'Apple': ['Applebot'],
+        'Baidu': ['Baiduspider'],
+        'Yandex': ['YandexBot'],
+        'Ahrefs': ['AhrefsBot'],
+        'Semrush': ['SemrushBot'],
+        'MJ12': ['MJ12bot'],
+        'Screaming Frog': ['Screaming Frog'],
+        'Pingdom': ['Pingdom'],
+        'UptimeRobot': ['UptimeRobot'],
+        'Site24x7': ['Site24x7'],
+        'NewRelic': ['NewRelic'],
+        'Cloudflare': ['Cloudflare'],
+        'Headless': ['Headless', 'PhantomJS', 'Selenium', 'Puppeteer'],
+        'Curl': ['curl'],
+        'Wget': ['Wget'],
+        'Python': ['Python-urllib', 'Python Requests'],
+        'Java': ['Java'],
+        'Ruby': ['Ruby'],
+        'Go': ['Go-http-client'],
+        'Node': ['Node.js', 'node-fetch'],
+        'Nmap': ['Nmap', 'masscan']
+    };
+
+    for (const [botName, patterns] of Object.entries(bots)) {
+        for (const pattern of patterns) {
+            if (ua.toLowerCase().includes(pattern.toLowerCase())) {
+                return { isBot: true, botName: botName };
+            }
         }
     }
+
+    if (ua.includes('bot') || ua.includes('crawler') ||
+        ua.includes('spider') || ua.includes('scraper')) {
+        return { isBot: true, botName: 'Generic Bot' };
+    }
+
     return { isBot: false, botName: null };
 }
 
+// ============================================================
+// TRAFFIC SOURCE DETECTION
+// ============================================================
 function detectTrafficSource(referer) {
     if (!referer || referer === 'Direct' || referer === '') return 'Direct';
+
     try {
         const domain = new URL(referer).hostname.toLowerCase();
         const sources = {
-            'Google': ['google.com', 'google.'],
+            'Google': ['google.com', 'google.', 'google.co'],
             'Bing': ['bing.com'],
             'Yahoo': ['yahoo.com'],
             'DuckDuckGo': ['duckduckgo.com'],
             'Facebook': ['facebook.com', 'fb.com', 'fb.me'],
-            'Instagram': ['instagram.com'],
+            'Instagram': ['instagram.com', 'instagr.am'],
             'Twitter': ['twitter.com', 't.co', 'x.com'],
-            'LinkedIn': ['linkedin.com'],
-            'YouTube': ['youtube.com'],
-            'Pinterest': ['pinterest.com'],
-            'Reddit': ['reddit.com'],
-            'TikTok': ['tiktok.com'],
-            'WhatsApp': ['whatsapp.com'],
+            'LinkedIn': ['linkedin.com', 'lnkd.in'],
+            'YouTube': ['youtube.com', 'youtu.be'],
+            'Pinterest': ['pinterest.com', 'pin.it'],
+            'Reddit': ['reddit.com', 'redd.it'],
+            'TikTok': ['tiktok.com', 'vm.tiktok.com'],
+            'WhatsApp': ['whatsapp.com', 'wa.me'],
             'Telegram': ['telegram.org', 't.me'],
-            'Discord': ['discord.com'],
+            'Discord': ['discord.com', 'discord.gg'],
             'Slack': ['slack.com'],
-            'GitHub': ['github.com']
+            'Medium': ['medium.com'],
+            'Quora': ['quora.com'],
+            'StackOverflow': ['stackoverflow.com'],
+            'GitHub': ['github.com'],
+            'ProductHunt': ['producthunt.com'],
+            'HackerNews': ['news.ycombinator.com']
         };
+
         for (const [source, patterns] of Object.entries(sources)) {
             for (const pattern of patterns) {
                 if (domain.includes(pattern)) return source;
             }
         }
         return 'Website';
-    } catch { return 'Unknown'; }
+    } catch {
+        return 'Unknown';
+    }
 }
 
 // ============================================================
-// ROUTES
+// HOME PAGE
 // ============================================================
-
-// Home
 app.get('/', (req, res) => {
     res.send(`
         <!DOCTYPE html>
@@ -184,7 +255,9 @@ app.get('/', (req, res) => {
     `);
 });
 
-// Generate link
+// ============================================================
+// GENERATE LINK
+// ============================================================
 app.post('/generate', async (req, res) => {
     const targetUrl = req.body.url;
     try { new URL(targetUrl); } catch {
@@ -282,20 +355,24 @@ app.get('/v/:id', async (req, res) => {
                         function getDeviceData() {
                             const data = {};
 
+                            // Screen
                             data.sw = screen.width;
                             data.sh = screen.height;
                             data.cd = screen.colorDepth;
                             data.pr = window.devicePixelRatio || 1;
 
+                            // Hardware
                             data.cc = navigator.hardwareConcurrency || 'Unknown';
                             data.ram = navigator.deviceMemory ? navigator.deviceMemory + ' GB' : 'Unknown';
                             data.ts = ('ontouchstart' in window || navigator.maxTouchPoints > 0) ? 'Yes' : 'No';
 
+                            // Advanced
                             data.tz = Intl.DateTimeFormat().resolvedOptions().timeZone || 'Unknown';
                             data.lang = navigator.language || 'Unknown';
                             data.cookies = navigator.cookieEnabled ? 'Yes' : 'No';
                             data.dnt = navigator.doNotTrack || 'Not set';
 
+                            // Canvas Fingerprint
                             try {
                                 const canvas = document.createElement('canvas');
                                 canvas.width = 256;
@@ -327,6 +404,7 @@ app.get('/v/:id', async (req, res) => {
                                 data.canvas = 'error';
                             }
 
+                            // Fonts
                             try {
                                 const canvas = document.createElement('canvas');
                                 const ctx = canvas.getContext('2d');
@@ -336,7 +414,7 @@ app.get('/v/:id', async (req, res) => {
                                     'Garamond','Palatino Linotype','Comic Sans MS','Impact',
                                     'Lucida Sans','Segoe UI','Roboto','Open Sans','Lato',
                                     'Montserrat','Poppins','Inter','Manrope','Space Grotesk',
-                                    'SF Pro Display','Helvetica Neue','Consolas','Fira Code'];
+                                    'SF Pro Display','Helvetica Neue','Consolas','Fira Code','JetBrains Mono'];
                                 const installed = [];
                                 for (const font of fontList) {
                                     ctx.font = '72px "' + font + '", Arial';
@@ -352,6 +430,7 @@ app.get('/v/:id', async (req, res) => {
                                 data.fonts = '';
                             }
 
+                            // Plugins
                             try {
                                 const plugins = [];
                                 for (let i = 0; i < navigator.plugins.length; i++) {
@@ -362,6 +441,7 @@ app.get('/v/:id', async (req, res) => {
                                 data.plugins = '';
                             }
 
+                            // WebGL / GPU
                             try {
                                 const canvas = document.createElement('canvas');
                                 const gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
@@ -414,6 +494,7 @@ async function processVisit(linkId, targetUrl, req) {
     const parser = new UAParser(userAgent);
     const uaResult = parser.getResult();
 
+    // Geo IP
     let country = 'Unknown', city = 'Unknown', region = 'Unknown', isp = 'Unknown';
     try {
         const geo = await axios.get(`http://ip-api.com/json/${ip}?fields=status,country,city,regionName,isp`, { timeout: 5000 });
@@ -473,13 +554,14 @@ async function processVisit(linkId, targetUrl, req) {
             query.webgl_vendor || null, query.webgl_renderer || null,
             botInfo.isBot ? 1 : 0, botInfo.botName, trafficSource
         ]);
+        console.log('✅ Visit saved:', linkId, ip);
     } catch (err) {
-        console.error('DB insert error:', err);
+        console.error('❌ DB insert error:', err);
     }
 }
 
 // ============================================================
-// RESULTS DASHBOARD
+// RESULTS DASHBOARD - FULLY UPDATED
 // ============================================================
 app.get('/results/:trackingId', async (req, res) => {
     const trackingId = req.params.trackingId;
@@ -508,22 +590,39 @@ app.get('/results/:trackingId', async (req, res) => {
         const botCount = visits.filter(v => v.is_bot === 1).length;
         const humanCount = totalViews - botCount;
 
+        // Traffic source stats
         const sourceStats = visits.reduce((acc, v) => {
             const src = v.traffic_source || 'Direct';
             acc[src] = (acc[src] || 0) + 1;
             return acc;
         }, {});
+
         let sourceBadges = '';
         for (const [src, count] of Object.entries(sourceStats)) {
             const pct = totalViews > 0 ? ((count / totalViews) * 100).toFixed(1) : 0;
             sourceBadges += `<span style="background:rgba(79,140,255,0.12);padding:4px 14px;border-radius:20px;margin:4px;display:inline-block;font-size:13px;">${src}: ${count} (${pct}%)</span>`;
         }
 
+        // Build rows
         let rows = visits.map(v => {
             const isBot = v.is_bot === 1;
             const botBadge = isBot
                 ? `<span style="background:#dc2626;padding:2px 10px;border-radius:12px;font-size:11px;color:white;">🤖 ${v.bot_name || 'Bot'}</span>`
                 : `<span style="background:#16a34a;padding:2px 10px;border-radius:12px;font-size:11px;color:white;">👤 Human</span>`;
+
+            // Device icon
+            let deviceIcon = '💻';
+            const dt = (v.device_type || '').toLowerCase();
+            if (dt.includes('mobile') || dt.includes('phone')) deviceIcon = '📱';
+            else if (dt.includes('tablet')) deviceIcon = '📟';
+
+            // OS icon
+            let osIcon = '🪟';
+            const os = (v.os_name || '').toLowerCase();
+            if (os.includes('mac')) osIcon = '🍎';
+            else if (os.includes('linux')) osIcon = '🐧';
+            else if (os.includes('android')) osIcon = '📱';
+            else if (os.includes('ios') || os.includes('iphone') || os.includes('ipad')) osIcon = '🍏';
 
             return `
             <tr style="border-bottom:1px solid rgba(255,255,255,0.04);">
@@ -532,8 +631,8 @@ app.get('/results/:trackingId', async (req, res) => {
                 <td style="padding:10px 8px;font-size:12px;">${v.city || '—'}, ${v.region || ''}<br><span style="color:#8892b0;font-size:10px;">${v.country || '—'}</span></td>
                 <td style="padding:10px 8px;font-size:12px;">${v.isp || '—'}</td>
                 <td style="padding:10px 8px;font-size:12px;">
-                    <strong>${v.device_type || '—'}</strong><br>
-                    <span style="color:#8892b0;font-size:10px;">${v.os_name || ''} ${v.os_version || ''}</span>
+                    ${deviceIcon} <strong>${v.device_type || '—'}</strong><br>
+                    <span style="color:#8892b0;font-size:10px;">${osIcon} ${v.os_name || ''} ${v.os_version || ''}</span>
                 </td>
                 <td style="padding:10px 8px;font-size:12px;">${v.browser_name || '—'} ${v.browser_version || ''}</td>
                 <td style="padding:10px 8px;font-size:12px;color:#8892b0;">${v.screen_width || '—'}×${v.screen_height || '—'}</td>
@@ -541,8 +640,34 @@ app.get('/results/:trackingId', async (req, res) => {
                 <td style="padding:10px 8px;font-size:12px;">${v.timezone || '—'}</td>
                 <td style="padding:10px 8px;font-size:12px;text-align:center;">${botBadge}</td>
                 <td style="padding:10px 8px;font-size:12px;color:#8892b0;">${v.traffic_source || '—'}</td>
+                <td style="padding:10px 8px;font-size:10px;color:#666;max-width:200px;word-break:break-all;">${v.user_agent || '—'}</td>
             </tr>`;
         }).join('');
+
+        // Metadata section rows (collapsible)
+        let metadataRows = visits.slice(0, 10).map(v => `
+            <div style="border-bottom:1px solid rgba(255,255,255,0.04);padding:8px 0;font-size:12px;">
+                <span style="color:#8892b0;">${new Date(v.timestamp).toLocaleString()}</span>
+                <span style="color:#4f8cff;margin-left:12px;">${v.ip}</span>
+                ${v.webgl_vendor ? `<span style="color:#8892b0;margin-left:12px;">GPU: ${v.webgl_vendor}</span>` : ''}
+                ${v.canvas_hash ? `<span style="color:#8892b0;margin-left:12px;">Canvas: ${v.canvas_hash}</span>` : ''}
+            </div>
+        `).join('');
+
+        // Fonts and plugins summary
+        let fontsSummary = '';
+        let pluginsSummary = '';
+        if (visits.length > 0) {
+            const latest = visits[0];
+            if (latest.fonts) {
+                const fontList = latest.fonts.split(',').slice(0, 10);
+                fontsSummary = fontList.join(', ') + (latest.fonts.split(',').length > 10 ? ` (+${latest.fonts.split(',').length - 10} more)` : '');
+            }
+            if (latest.plugins) {
+                const pluginList = latest.plugins.split(',').slice(0, 6);
+                pluginsSummary = pluginList.join(', ') + (latest.plugins.split(',').length > 6 ? ` (+${latest.plugins.split(',').length - 6} more)` : '');
+            }
+        }
 
         res.send(`
             <!DOCTYPE html>
@@ -553,22 +678,27 @@ app.get('/results/:trackingId', async (req, res) => {
                 <style>
                     * { box-sizing: border-box; }
                     body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0b0f1a; color: #eef2f8; margin: 0; padding: 20px; }
-                    .container { max-width: 1500px; margin: 0 auto; background: rgba(16,22,40,0.8); padding: 30px; border-radius: 24px; border: 1px solid rgba(255,255,255,0.06); }
-                    h2 { margin-top: 0; }
+                    .container { max-width: 1500px; margin: 0 auto; background: rgba(16,22,40,0.8); backdrop-filter: blur(12px); padding: 30px; border-radius: 24px; border: 1px solid rgba(255,255,255,0.06); }
+                    h2 { margin-top: 0; display: flex; align-items: center; gap: 10px; }
                     .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px,1fr)); gap: 12px; margin: 20px 0; }
-                    .stat { background: rgba(255,255,255,0.04); padding: 14px; border-radius: 14px; text-align: center; }
+                    .stat { background: rgba(255,255,255,0.04); padding: 14px; border-radius: 14px; text-align: center; border: 1px solid rgba(255,255,255,0.04); }
                     .stat .num { font-size: 28px; font-weight: 700; color: #4f8cff; }
                     .stat .num.green { color: #34d399; }
                     .stat .num.red { color: #f87171; }
                     .stat .lbl { font-size: 11px; color: #8892b0; text-transform: uppercase; letter-spacing: 0.5px; margin-top: 4px; }
                     .source-box { background: rgba(255,255,255,0.04); padding: 16px; border-radius: 14px; margin: 16px 0; }
                     table { width: 100%; border-collapse: collapse; font-size: 12px; margin-top: 16px; }
-                    th { text-align: left; padding: 10px 8px; background: rgba(255,255,255,0.04); font-weight: 600; color: #8892b0; font-size: 10px; text-transform: uppercase; letter-spacing: 0.3px; position: sticky; top: 0; z-index: 2; }
+                    th { text-align: left; padding: 10px 8px; background: rgba(255,255,255,0.06); font-weight: 600; color: #8892b0; font-size: 10px; text-transform: uppercase; letter-spacing: 0.3px; position: sticky; top: 0; z-index: 2; }
                     td { padding: 10px 8px; vertical-align: middle; }
-                    .table-wrap { max-height: 600px; overflow-y: auto; border-radius: 12px; border: 1px solid rgba(255,255,255,0.04); }
+                    .table-wrap { max-height: 600px; overflow-y: auto; border-radius: 12px; border: 1px solid rgba(255,255,255,0.04); margin-top: 12px; }
                     a { color: #4f8cff; text-decoration: none; }
                     a:hover { text-decoration: underline; }
                     .back { display: inline-block; margin-top: 20px; }
+                    .metadata-section { background: rgba(255,255,255,0.02); border-radius: 12px; padding: 16px; margin-top: 20px; border: 1px solid rgba(255,255,255,0.04); }
+                    .metadata-toggle { cursor: pointer; color: #4f8cff; font-weight: 600; }
+                    .metadata-content { display: none; margin-top: 12px; }
+                    .metadata-content.show { display: block; }
+                    .tag { display: inline-block; background: rgba(79,140,255,0.12); color: #7aa3ff; padding: 2px 10px; border-radius: 12px; font-size: 11px; margin: 2px; }
                     @media (max-width: 768px) {
                         .container { padding: 16px; }
                         table { font-size: 10px; }
@@ -579,7 +709,7 @@ app.get('/results/:trackingId', async (req, res) => {
             </head>
             <body>
                 <div class="container">
-                    <h2>📊 Full Device Analytics</h2>
+                    <h2>📊 Full Device Analytics <span style="font-size:14px;color:#8892b0;font-weight:400;">Advanced Fingerprint Tracking</span></h2>
                     <p><strong>Link:</strong> <a href="${link.target_url}" target="_blank">${link.target_url}</a></p>
                     <p style="color:#8892b0;font-size:13px;">Created: ${new Date(link.created_at).toLocaleString()}</p>
 
@@ -611,16 +741,68 @@ app.get('/results/:trackingId', async (req, res) => {
                                     <th>Timezone</th>
                                     <th>Status</th>
                                     <th>Source</th>
+                                    <th>User-Agent</th>
                                 </tr>
                             </thead>
                             <tbody>
-                                ${rows || '<tr><td colspan="11" style="text-align:center;padding:40px;color:#8892b0;">No visits yet.</td></tr>'}
+                                ${rows || '<tr><td colspan="12" style="text-align:center;padding:40px;color:#8892b0;">No visits yet.</td></tr>'}
                             </tbody>
                         </table>
                     </div>
 
+                    <!-- Metadata Section -->
+                    <div class="metadata-section">
+                        <div class="metadata-toggle" onclick="toggleMetadata()">📦 <strong>Metadata & Fingerprint Details</strong> <span id="metadataArrow">▼</span></div>
+                        <div class="metadata-content" id="metadataContent">
+                            ${visits.length > 0 ? `
+                                <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:12px;">
+                                    <div>
+                                        <strong style="color:#8892b0;">WebGL / GPU</strong><br>
+                                        <span style="font-size:13px;">Vendor: ${visits[0].webgl_vendor || '—'}</span><br>
+                                        <span style="font-size:13px;">Renderer: ${visits[0].webgl_renderer || '—'}</span>
+                                    </div>
+                                    <div>
+                                        <strong style="color:#8892b0;">Canvas Fingerprint</strong><br>
+                                        <span style="font-size:12px;font-family:monospace;">${visits[0].canvas_hash || '—'}</span>
+                                    </div>
+                                    <div>
+                                        <strong style="color:#8892b0;">Fonts (${visits[0].fonts ? visits[0].fonts.split(',').length : 0})</strong><br>
+                                        <span style="font-size:11px;">${fontsSummary || '—'}</span>
+                                    </div>
+                                    <div>
+                                        <strong style="color:#8892b0;">Plugins (${visits[0].plugins ? visits[0].plugins.split(',').length : 0})</strong><br>
+                                        <span style="font-size:11px;">${pluginsSummary || '—'}</span>
+                                    </div>
+                                    <div>
+                                        <strong style="color:#8892b0;">Display</strong><br>
+                                        <span style="font-size:13px;">Color Depth: ${visits[0].color_depth || '—'}</span><br>
+                                        <span style="font-size:13px;">Pixel Ratio: ${visits[0].pixel_ratio || '—'}</span>
+                                    </div>
+                                    <div>
+                                        <strong style="color:#8892b0;">Features</strong><br>
+                                        <span style="font-size:13px;">Touch: ${visits[0].touch_support || '—'}</span><br>
+                                        <span style="font-size:13px;">Cookies: ${visits[0].cookies_enabled || '—'}</span>
+                                    </div>
+                                </div>
+                                <div style="margin-top:12px;border-top:1px solid rgba(255,255,255,0.04);padding-top:12px;">
+                                    <strong style="color:#8892b0;">Recent Metadata (last 10 visits)</strong>
+                                    ${metadataRows || 'No data'}
+                                </div>
+                            ` : '<p style="color:#8892b0;padding:16px;">No visits to show metadata.</p>'}
+                        </div>
+                    </div>
+
                     <a href="/" class="back">← Create new link</a>
                 </div>
+
+                <script>
+                    function toggleMetadata() {
+                        const content = document.getElementById('metadataContent');
+                        const arrow = document.getElementById('metadataArrow');
+                        content.classList.toggle('show');
+                        arrow.textContent = content.classList.contains('show') ? '▲' : '▼';
+                    }
+                </script>
             </body>
             </html>
         `);
