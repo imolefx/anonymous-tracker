@@ -12,13 +12,14 @@ app.use(express.json());
 app.use(requestIp.mw());
 
 // ============================================================
-// DATABASE CONNECTION (Supabase via pg)
+// DATABASE CONNECTION (Supabase via pg - IPv4 FIX)
 // ============================================================
 const pool = new Pool({
     connectionString: process.env.DATABASE_URL,
     ssl: {
         rejectUnauthorized: false
-    }
+    },
+    family: 4 // FORCE IPv4 - FIXES ENETUNREACH ERROR
 });
 
 async function initDatabase() {
