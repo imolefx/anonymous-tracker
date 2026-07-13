@@ -1,5 +1,5 @@
 const express = require('express');
-const sqlite3 = require('sqlite3').verbose();
+const { neon } = require('@neondatabase/serverless');
 const crypto = require('crypto');
 const requestIp = require('request-ip');
 const axios = require('axios');
@@ -12,59 +12,70 @@ app.use(express.json());
 app.use(requestIp.mw());
 
 // ============================================================
-// DATABASE
+// DATABASE CONNECTION (SUPABASE via Neon driver)
 // ============================================================
-const db = new sqlite3.Database('./tracker.db', (err) => {
-    if (!err) {
-        db.run(`CREATE TABLE IF NOT EXISTS links (
-            id TEXT PRIMARY KEY,
-            target_url TEXT,
-            tracking_id TEXT,
-            created_at TEXT DEFAULT CURRENT_TIMESTAMP
-        )`);
+const sql = neon(process.env.DATABASE_URL);
 
-        db.run(`CREATE TABLE IF NOT EXISTS visits (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            link_id TEXT,
-            timestamp TEXT,
-            ip TEXT,
-            country TEXT,
-            city TEXT,
-            region TEXT,
-            isp TEXT,
-            user_agent TEXT,
-            referer TEXT,
-            os_name TEXT,
-            os_version TEXT,
-            device_type TEXT,
-            device_vendor TEXT,
-            device_model TEXT,
-            browser_name TEXT,
-            browser_version TEXT,
-            cpu_cores TEXT,
-            ram TEXT,
-            gpu TEXT,
-            touch_support TEXT,
-            screen_width INTEGER,
-            screen_height INTEGER,
-            color_depth TEXT,
-            pixel_ratio REAL,
-            timezone TEXT,
-            language TEXT,
-            cookies_enabled TEXT,
-            do_not_track TEXT,
-            canvas_hash TEXT,
-            fonts TEXT,
-            plugins TEXT,
-            webgl_vendor TEXT,
-            webgl_renderer TEXT,
-            is_bot INTEGER DEFAULT 0,
-            bot_name TEXT,
-            traffic_source TEXT,
-            FOREIGN KEY(link_id) REFERENCES links(id)
-        )`);
+async function initDatabase() {
+    try {
+        await sql`
+            CREATE TABLE IF NOT EXISTS links (
+                id TEXT PRIMARY KEY,
+                target_url TEXT,
+                tracking_id TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        `;
+
+        await sql`
+            CREATE TABLE IF NOT EXISTS visits (
+                id SERIAL PRIMARY KEY,
+                link_id TEXT,
+                timestamp TIMESTAMP,
+                ip TEXT,
+                country TEXT,
+                city TEXT,
+                region TEXT,
+                isp TEXT,
+                user_agent TEXT,
+                referer TEXT,
+                os_name TEXT,
+                os_version TEXT,
+                device_type TEXT,
+                device_vendor TEXT,
+                device_model TEXT,
+                browser_name TEXT,
+                browser_version TEXT,
+                cpu_cores TEXT,
+                ram TEXT,
+                gpu TEXT,
+                touch_support TEXT,
+                screen_width INTEGER,
+                screen_height INTEGER,
+                color_depth TEXT,
+                pixel_ratio REAL,
+                timezone TEXT,
+                language TEXT,
+                cookies_enabled TEXT,
+                do_not_track TEXT,
+                canvas_hash TEXT,
+                fonts TEXT,
+                plugins TEXT,
+                webgl_vendor TEXT,
+                webgl_renderer TEXT,
+                is_bot INTEGER DEFAULT 0,
+                bot_name TEXT,
+                traffic_source TEXT,
+                FOREIGN KEY(link_id) REFERENCES links(id)
+            )
+        `;
+        console.log('✅ Database tables ready');
+    } catch (err) {
+        console.error('❌ Database init error:', err);
     }
-});
+}
+
+initDatabase();
 
 // ============================================================
 // HELPERS
@@ -169,7 +180,7 @@ app.get('/', (req, res) => {
 });
 
 // Generate link
-app.post('/generate', (req, res) => {
+app.post('/generate', async (req, res) => {
     const targetUrl = req.body.url;
     try { new URL(targetUrl); } catch {
         return res.send(`<h3>❌ Invalid URL</h3><a href="/">← Back</a>`);
@@ -180,69 +191,79 @@ app.post('/generate', (req, res) => {
     const host = req.get('host');
     const protocol = req.protocol;
 
-    db.run(`INSERT INTO links (id, target_url, tracking_id) VALUES (?, ?, ?)`,
-        [linkId, targetUrl, trackingId],
-        function(err) {
-            if (err) return res.send('Error creating link.');
-            res.send(`
-                <!DOCTYPE html>
-                <html>
-                <head><title>Link Generated</title>
-                <style>
-                    body { font-family: -apple-system, sans-serif; background: #0b0f1a; color: #eef2f8; padding: 40px; display: flex; justify-content: center; }
-                    .container { max-width: 600px; background: rgba(16,22,40,0.8); padding: 40px; border-radius: 24px; }
-                    .box { background: #141a2b; padding: 16px; border-radius: 12px; margin: 12px 0; border-left: 4px solid #4f8cff; }
-                    .box.green { border-left-color: #34d399; }
-                    input { width: 100%; padding: 10px; border-radius: 8px; border: none; background: #0b0f1a; color: white; font-size: 14px; }
-                    .btn { padding: 6px 16px; background: #2a2f45; border: none; border-radius: 8px; color: white; cursor: pointer; margin-top: 8px; }
-                    a { color: #4f8cff; text-decoration: none; }
-                </style>
-                </head>
-                <body>
-                <div class="container">
-                    <h3>✅ Link Generated</h3>
-                    <p><strong>🔗 Send this link:</strong></p>
-                    <div class="box">
-                        <input type="text" id="trackLink" value="${protocol}://${host}/v/${linkId}" readonly>
-                        <br><button class="btn" onclick="copy('trackLink')">📋 Copy</button>
-                    </div>
-                    <p><strong>🔒 Your results link (keep private):</strong></p>
-                    <div class="box green">
-                        <input type="text" id="resultsLink" value="${protocol}://${host}/results/${trackingId}" readonly>
-                        <br><button class="btn" onclick="copy('resultsLink')">📋 Copy</button>
-                    </div>
-                    <p style="color:#8892b0;font-size:13px;">⚠️ Save the results link now — you won't see it again.</p>
-                    <a href="/">← Create another</a>
+    try {
+        await sql`
+            INSERT INTO links (id, target_url, tracking_id)
+            VALUES (${linkId}, ${targetUrl}, ${trackingId})
+        `;
+
+        res.send(`
+            <!DOCTYPE html>
+            <html>
+            <head><title>Link Generated</title>
+            <style>
+                body { font-family: -apple-system, sans-serif; background: #0b0f1a; color: #eef2f8; padding: 40px; display: flex; justify-content: center; }
+                .container { max-width: 600px; background: rgba(16,22,40,0.8); padding: 40px; border-radius: 24px; }
+                .box { background: #141a2b; padding: 16px; border-radius: 12px; margin: 12px 0; border-left: 4px solid #4f8cff; }
+                .box.green { border-left-color: #34d399; }
+                input { width: 100%; padding: 10px; border-radius: 8px; border: none; background: #0b0f1a; color: white; font-size: 14px; }
+                .btn { padding: 6px 16px; background: #2a2f45; border: none; border-radius: 8px; color: white; cursor: pointer; margin-top: 8px; }
+                a { color: #4f8cff; text-decoration: none; }
+            </style>
+            </head>
+            <body>
+            <div class="container">
+                <h3>✅ Link Generated</h3>
+                <p><strong>🔗 Send this link:</strong></p>
+                <div class="box">
+                    <input type="text" id="trackLink" value="${protocol}://${host}/v/${linkId}" readonly>
+                    <br><button class="btn" onclick="copy('trackLink')">📋 Copy</button>
                 </div>
-                <script>
-                    function copy(id) {
-                        const el = document.getElementById(id);
-                        el.select();
-                        document.execCommand('copy');
-                        alert('Copied!');
-                    }
-                </script>
-                </body>
-                </html>
-            `);
-        }
-    );
+                <p><strong>🔒 Your results link (keep private):</strong></p>
+                <div class="box green">
+                    <input type="text" id="resultsLink" value="${protocol}://${host}/results/${trackingId}" readonly>
+                    <br><button class="btn" onclick="copy('resultsLink')">📋 Copy</button>
+                </div>
+                <p style="color:#8892b0;font-size:13px;">⚠️ Save the results link now — you won't see it again.</p>
+                <a href="/">← Create another</a>
+            </div>
+            <script>
+                function copy(id) {
+                    const el = document.getElementById(id);
+                    el.select();
+                    document.execCommand('copy');
+                    alert('Copied!');
+                }
+            </script>
+            </body>
+            </html>
+        `);
+    } catch (err) {
+        console.error('Error creating link:', err);
+        res.send('Error creating link.');
+    }
 });
 
 // ============================================================
-// TRACKING ENDPOINT with embedded fingerprint script
+// TRACKING ENDPOINT
 // ============================================================
 app.get('/v/:id', async (req, res) => {
     const linkId = req.params.id;
 
-    db.get(`SELECT target_url FROM links WHERE id = ?`, [linkId], async (err, row) => {
-        if (err || !row) {
+    try {
+        const result = await sql`
+            SELECT target_url FROM links WHERE id = ${linkId}
+        `;
+
+        if (result.length === 0) {
             return res.status(404).send(`<h3>❌ Link not found</h3><a href="/">← Home</a>`);
         }
 
+        const targetUrl = result[0].target_url;
+
         if (Object.keys(req.query).length > 0) {
-            await processVisit(linkId, row.target_url, req);
-            return res.redirect(row.target_url);
+            await processVisit(linkId, targetUrl, req);
+            return res.redirect(targetUrl);
         }
 
         res.send(`
@@ -363,7 +384,10 @@ app.get('/v/:id', async (req, res) => {
             </body>
             </html>
         `);
-    });
+    } catch (err) {
+        console.error('Tracking error:', err);
+        res.status(500).send('An error occurred.');
+    }
 });
 
 // ============================================================
@@ -406,172 +430,185 @@ async function processVisit(linkId, targetUrl, req) {
     const browserName = uaResult.browser.name || 'Unknown';
     const browserVersion = uaResult.browser.version || 'Unknown';
 
-    db.run(`
-        INSERT INTO visits (
-            link_id, timestamp, ip, country, city, region, isp,
-            user_agent, referer,
-            os_name, os_version, device_type, device_vendor, device_model,
-            browser_name, browser_version,
-            cpu_cores, ram, gpu, touch_support,
-            screen_width, screen_height, color_depth, pixel_ratio,
-            timezone, language, cookies_enabled, do_not_track,
-            canvas_hash, fonts, plugins,
-            webgl_vendor, webgl_renderer,
-            is_bot, bot_name, traffic_source
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `, [
-        linkId, timestamp, ip, country, city, region, isp,
-        userAgent, referer,
-        osName, osVersion, deviceType, deviceVendor, deviceModel,
-        browserName, browserVersion,
-        query.cc || 'Unknown', query.ram || 'Unknown', query.gpu || 'Unknown', query.ts || 'Unknown',
-        query.sw || null, query.sh || null, query.cd || null, query.pr || null,
-        query.tz || 'Unknown', query.lang || 'Unknown', query.cookies || 'Unknown', query.dnt || 'Unknown',
-        query.canvas || null, query.fonts || null, query.plugins || null,
-        query.webgl_vendor || null, query.webgl_renderer || null,
-        botInfo.isBot ? 1 : 0, botInfo.botName, trafficSource
-    ], (err) => {
-        if (err) console.error('DB insert error:', err);
-    });
+    try {
+        await sql`
+            INSERT INTO visits (
+                link_id, timestamp, ip, country, city, region, isp,
+                user_agent, referer,
+                os_name, os_version, device_type, device_vendor, device_model,
+                browser_name, browser_version,
+                cpu_cores, ram, gpu, touch_support,
+                screen_width, screen_height, color_depth, pixel_ratio,
+                timezone, language, cookies_enabled, do_not_track,
+                canvas_hash, fonts, plugins,
+                webgl_vendor, webgl_renderer,
+                is_bot, bot_name, traffic_source
+            ) VALUES (
+                ${linkId}, ${timestamp}, ${ip}, ${country}, ${city}, ${region}, ${isp},
+                ${userAgent}, ${referer},
+                ${osName}, ${osVersion}, ${deviceType}, ${deviceVendor}, ${deviceModel},
+                ${browserName}, ${browserVersion},
+                ${query.cc || 'Unknown'}, ${query.ram || 'Unknown'}, ${query.gpu || 'Unknown'}, ${query.ts || 'Unknown'},
+                ${query.sw || null}, ${query.sh || null}, ${query.cd || null}, ${query.pr || null},
+                ${query.tz || 'Unknown'}, ${query.lang || 'Unknown'}, ${query.cookies || 'Unknown'}, ${query.dnt || 'Unknown'},
+                ${query.canvas || null}, ${query.fonts || null}, ${query.plugins || null},
+                ${query.webgl_vendor || null}, ${query.webgl_renderer || null},
+                ${botInfo.isBot ? 1 : 0}, ${botInfo.botName}, ${trafficSource}
+            )
+        `;
+    } catch (err) {
+        console.error('DB insert error:', err);
+    }
 }
 
 // ============================================================
 // RESULTS DASHBOARD
 // ============================================================
-app.get('/results/:trackingId', (req, res) => {
+app.get('/results/:trackingId', async (req, res) => {
     const trackingId = req.params.trackingId;
 
-    db.get(`SELECT id, target_url, created_at FROM links WHERE tracking_id = ?`, [trackingId], (err, link) => {
-        if (err || !link) {
+    try {
+        const linkResult = await sql`
+            SELECT id, target_url, created_at FROM links WHERE tracking_id = ${trackingId}
+        `;
+
+        if (linkResult.length === 0) {
             return res.status(404).send(`<h3>❌ Not found</h3><a href="/">← Home</a>`);
         }
 
-        db.all(`SELECT * FROM visits WHERE link_id = ? ORDER BY timestamp DESC`, [link.id], (err, visits) => {
-            if (err) visits = [];
+        const link = linkResult[0];
 
-            const totalViews = visits.length;
-            const uniqueIps = new Set(visits.map(v => v.ip)).size;
-            const botCount = visits.filter(v => v.is_bot === 1).length;
-            const humanCount = totalViews - botCount;
+        const visitsResult = await sql`
+            SELECT * FROM visits WHERE link_id = ${link.id} ORDER BY timestamp DESC
+        `;
 
-            const sourceStats = visits.reduce((acc, v) => {
-                const src = v.traffic_source || 'Direct';
-                acc[src] = (acc[src] || 0) + 1;
-                return acc;
-            }, {});
-            let sourceBadges = '';
-            for (const [src, count] of Object.entries(sourceStats)) {
-                const pct = totalViews > 0 ? ((count / totalViews) * 100).toFixed(1) : 0;
-                sourceBadges += `<span style="background:rgba(79,140,255,0.12);padding:4px 14px;border-radius:20px;margin:4px;display:inline-block;font-size:13px;">${src}: ${count} (${pct}%)</span>`;
-            }
+        const visits = visitsResult;
 
-            let rows = visits.map(v => {
-                const isBot = v.is_bot === 1;
-                const botBadge = isBot
-                    ? `<span style="background:#dc2626;padding:2px 10px;border-radius:12px;font-size:11px;color:white;">🤖 ${v.bot_name || 'Bot'}</span>`
-                    : `<span style="background:#16a34a;padding:2px 10px;border-radius:12px;font-size:11px;color:white;">👤 Human</span>`;
+        const totalViews = visits.length;
+        const uniqueIps = new Set(visits.map(v => v.ip)).size;
+        const botCount = visits.filter(v => v.is_bot === 1).length;
+        const humanCount = totalViews - botCount;
 
-                return `
-                <tr style="border-bottom:1px solid rgba(255,255,255,0.04);">
-                    <td style="padding:10px 8px;font-size:12px;">${new Date(v.timestamp).toLocaleString()}</td>
-                    <td style="padding:10px 8px;font-size:12px;color:#4f8cff;">${v.ip}</td>
-                    <td style="padding:10px 8px;font-size:12px;">${v.city || '—'}, ${v.region || ''}<br><span style="color:#8892b0;font-size:10px;">${v.country || '—'}</span></td>
-                    <td style="padding:10px 8px;font-size:12px;">${v.isp || '—'}</td>
-                    <td style="padding:10px 8px;font-size:12px;">
-                        <strong>${v.device_type || '—'}</strong><br>
-                        <span style="color:#8892b0;font-size:10px;">${v.os_name || ''} ${v.os_version || ''}</span>
-                    </td>
-                    <td style="padding:10px 8px;font-size:12px;">${v.browser_name || '—'} ${v.browser_version || ''}</td>
-                    <td style="padding:10px 8px;font-size:12px;color:#8892b0;">${v.screen_width || '—'}×${v.screen_height || '—'}</td>
-                    <td style="padding:10px 8px;font-size:12px;color:#8892b0;">${v.cpu_cores || '—'} cores<br>${v.ram || '—'}</td>
-                    <td style="padding:10px 8px;font-size:12px;">${v.timezone || '—'}</td>
-                    <td style="padding:10px 8px;font-size:12px;text-align:center;">${botBadge}</td>
-                    <td style="padding:10px 8px;font-size:12px;color:#8892b0;">${v.traffic_source || '—'}</td>
-                </tr>`;
-            }).join('');
+        const sourceStats = visits.reduce((acc, v) => {
+            const src = v.traffic_source || 'Direct';
+            acc[src] = (acc[src] || 0) + 1;
+            return acc;
+        }, {});
+        let sourceBadges = '';
+        for (const [src, count] of Object.entries(sourceStats)) {
+            const pct = totalViews > 0 ? ((count / totalViews) * 100).toFixed(1) : 0;
+            sourceBadges += `<span style="background:rgba(79,140,255,0.12);padding:4px 14px;border-radius:20px;margin:4px;display:inline-block;font-size:13px;">${src}: ${count} (${pct}%)</span>`;
+        }
 
-            res.send(`
-                <!DOCTYPE html>
-                <html>
-                <head>
-                    <title>📊 Full Analytics</title>
-                    <meta name="viewport" content="width=device-width, initial-scale=1">
-                    <style>
-                        * { box-sizing: border-box; }
-                        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0b0f1a; color: #eef2f8; margin: 0; padding: 20px; }
-                        .container { max-width: 1500px; margin: 0 auto; background: rgba(16,22,40,0.8); padding: 30px; border-radius: 24px; border: 1px solid rgba(255,255,255,0.06); }
-                        h2 { margin-top: 0; }
-                        .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px,1fr)); gap: 12px; margin: 20px 0; }
-                        .stat { background: rgba(255,255,255,0.04); padding: 14px; border-radius: 14px; text-align: center; }
-                        .stat .num { font-size: 28px; font-weight: 700; color: #4f8cff; }
-                        .stat .num.green { color: #34d399; }
-                        .stat .num.red { color: #f87171; }
-                        .stat .lbl { font-size: 11px; color: #8892b0; text-transform: uppercase; letter-spacing: 0.5px; margin-top: 4px; }
-                        .source-box { background: rgba(255,255,255,0.04); padding: 16px; border-radius: 14px; margin: 16px 0; }
-                        table { width: 100%; border-collapse: collapse; font-size: 12px; margin-top: 16px; }
-                        th { text-align: left; padding: 10px 8px; background: rgba(255,255,255,0.04); font-weight: 600; color: #8892b0; font-size: 10px; text-transform: uppercase; letter-spacing: 0.3px; position: sticky; top: 0; z-index: 2; }
-                        td { padding: 10px 8px; vertical-align: middle; }
-                        .table-wrap { max-height: 600px; overflow-y: auto; border-radius: 12px; border: 1px solid rgba(255,255,255,0.04); }
-                        a { color: #4f8cff; text-decoration: none; }
-                        a:hover { text-decoration: underline; }
-                        .back { display: inline-block; margin-top: 20px; }
-                        @media (max-width: 768px) {
-                            .container { padding: 16px; }
-                            table { font-size: 10px; }
-                            td, th { padding: 6px 4px; }
-                            .stats { grid-template-columns: repeat(2,1fr); }
-                        }
-                    </style>
-                </head>
-                <body>
-                    <div class="container">
-                        <h2>📊 Full Device Analytics</h2>
-                        <p><strong>Link:</strong> <a href="${link.target_url}" target="_blank">${link.target_url}</a></p>
-                        <p style="color:#8892b0;font-size:13px;">Created: ${new Date(link.created_at).toLocaleString()}</p>
+        let rows = visits.map(v => {
+            const isBot = v.is_bot === 1;
+            const botBadge = isBot
+                ? `<span style="background:#dc2626;padding:2px 10px;border-radius:12px;font-size:11px;color:white;">🤖 ${v.bot_name || 'Bot'}</span>`
+                : `<span style="background:#16a34a;padding:2px 10px;border-radius:12px;font-size:11px;color:white;">👤 Human</span>`;
 
-                        <div class="stats">
-                            <div class="stat"><div class="num">${totalViews}</div><div class="lbl">Total Views</div></div>
-                            <div class="stat"><div class="num green">${uniqueIps}</div><div class="lbl">Unique IPs</div></div>
-                            <div class="stat"><div class="num green">${humanCount}</div><div class="lbl">👤 Humans</div></div>
-                            <div class="stat"><div class="num red">${botCount}</div><div class="lbl">🤖 Bots</div></div>
-                        </div>
+            return `
+            <tr style="border-bottom:1px solid rgba(255,255,255,0.04);">
+                <td style="padding:10px 8px;font-size:12px;">${new Date(v.timestamp).toLocaleString()}</td>
+                <td style="padding:10px 8px;font-size:12px;color:#4f8cff;">${v.ip}</td>
+                <td style="padding:10px 8px;font-size:12px;">${v.city || '—'}, ${v.region || ''}<br><span style="color:#8892b0;font-size:10px;">${v.country || '—'}</span></td>
+                <td style="padding:10px 8px;font-size:12px;">${v.isp || '—'}</td>
+                <td style="padding:10px 8px;font-size:12px;">
+                    <strong>${v.device_type || '—'}</strong><br>
+                    <span style="color:#8892b0;font-size:10px;">${v.os_name || ''} ${v.os_version || ''}</span>
+                </td>
+                <td style="padding:10px 8px;font-size:12px;">${v.browser_name || '—'} ${v.browser_version || ''}</td>
+                <td style="padding:10px 8px;font-size:12px;color:#8892b0;">${v.screen_width || '—'}×${v.screen_height || '—'}</td>
+                <td style="padding:10px 8px;font-size:12px;color:#8892b0;">${v.cpu_cores || '—'} cores<br>${v.ram || '—'}</td>
+                <td style="padding:10px 8px;font-size:12px;">${v.timezone || '—'}</td>
+                <td style="padding:10px 8px;font-size:12px;text-align:center;">${botBadge}</td>
+                <td style="padding:10px 8px;font-size:12px;color:#8892b0;">${v.traffic_source || '—'}</td>
+            </tr>`;
+        }).join('');
 
-                        <div class="source-box">
-                            <strong>📊 Traffic Sources</strong><br>
-                            ${sourceBadges || 'No data'}
-                        </div>
+        res.send(`
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <title>📊 Full Analytics</title>
+                <meta name="viewport" content="width=device-width, initial-scale=1">
+                <style>
+                    * { box-sizing: border-box; }
+                    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0b0f1a; color: #eef2f8; margin: 0; padding: 20px; }
+                    .container { max-width: 1500px; margin: 0 auto; background: rgba(16,22,40,0.8); padding: 30px; border-radius: 24px; border: 1px solid rgba(255,255,255,0.06); }
+                    h2 { margin-top: 0; }
+                    .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px,1fr)); gap: 12px; margin: 20px 0; }
+                    .stat { background: rgba(255,255,255,0.04); padding: 14px; border-radius: 14px; text-align: center; }
+                    .stat .num { font-size: 28px; font-weight: 700; color: #4f8cff; }
+                    .stat .num.green { color: #34d399; }
+                    .stat .num.red { color: #f87171; }
+                    .stat .lbl { font-size: 11px; color: #8892b0; text-transform: uppercase; letter-spacing: 0.5px; margin-top: 4px; }
+                    .source-box { background: rgba(255,255,255,0.04); padding: 16px; border-radius: 14px; margin: 16px 0; }
+                    table { width: 100%; border-collapse: collapse; font-size: 12px; margin-top: 16px; }
+                    th { text-align: left; padding: 10px 8px; background: rgba(255,255,255,0.04); font-weight: 600; color: #8892b0; font-size: 10px; text-transform: uppercase; letter-spacing: 0.3px; position: sticky; top: 0; z-index: 2; }
+                    td { padding: 10px 8px; vertical-align: middle; }
+                    .table-wrap { max-height: 600px; overflow-y: auto; border-radius: 12px; border: 1px solid rgba(255,255,255,0.04); }
+                    a { color: #4f8cff; text-decoration: none; }
+                    a:hover { text-decoration: underline; }
+                    .back { display: inline-block; margin-top: 20px; }
+                    @media (max-width: 768px) {
+                        .container { padding: 16px; }
+                        table { font-size: 10px; }
+                        td, th { padding: 6px 4px; }
+                        .stats { grid-template-columns: repeat(2,1fr); }
+                    }
+                </style>
+            </head>
+            <body>
+                <div class="container">
+                    <h2>📊 Full Device Analytics</h2>
+                    <p><strong>Link:</strong> <a href="${link.target_url}" target="_blank">${link.target_url}</a></p>
+                    <p style="color:#8892b0;font-size:13px;">Created: ${new Date(link.created_at).toLocaleString()}</p>
 
-                        <h3>📋 Detailed Visit Log</h3>
-                        <div class="table-wrap">
-                            <table>
-                                <thead>
-                                    <tr>
-                                        <th>Time</th>
-                                        <th>IP</th>
-                                        <th>Location</th>
-                                        <th>ISP</th>
-                                        <th>Device / OS</th>
-                                        <th>Browser</th>
-                                        <th>Screen</th>
-                                        <th>CPU / RAM</th>
-                                        <th>Timezone</th>
-                                        <th>Status</th>
-                                        <th>Source</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    ${rows || '<tr><td colspan="11" style="text-align:center;padding:40px;color:#8892b0;">No visits yet.</td></tr>'}
-                                </tbody>
-                            </table>
-                        </div>
-
-                        <a href="/" class="back">← Create new link</a>
+                    <div class="stats">
+                        <div class="stat"><div class="num">${totalViews}</div><div class="lbl">Total Views</div></div>
+                        <div class="stat"><div class="num green">${uniqueIps}</div><div class="lbl">Unique IPs</div></div>
+                        <div class="stat"><div class="num green">${humanCount}</div><div class="lbl">👤 Humans</div></div>
+                        <div class="stat"><div class="num red">${botCount}</div><div class="lbl">🤖 Bots</div></div>
                     </div>
-                </body>
-                </html>
-            `);
-        });
-    });
+
+                    <div class="source-box">
+                        <strong>📊 Traffic Sources</strong><br>
+                        ${sourceBadges || 'No data'}
+                    </div>
+
+                    <h3>📋 Detailed Visit Log</h3>
+                    <div class="table-wrap">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>Time</th>
+                                    <th>IP</th>
+                                    <th>Location</th>
+                                    <th>ISP</th>
+                                    <th>Device / OS</th>
+                                    <th>Browser</th>
+                                    <th>Screen</th>
+                                    <th>CPU / RAM</th>
+                                    <th>Timezone</th>
+                                    <th>Status</th>
+                                    <th>Source</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                ${rows || '<tr><td colspan="11" style="text-align:center;padding:40px;color:#8892b0;">No visits yet.</td></tr>'}
+                            </tbody>
+                        </table>
+                    </div>
+
+                    <a href="/" class="back">← Create new link</a>
+                </div>
+            </body>
+            </html>
+        `);
+    } catch (err) {
+        console.error('Results error:', err);
+        res.status(500).send('An error occurred.');
+    }
 });
 
 // ============================================================
