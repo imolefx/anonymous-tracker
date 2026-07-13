@@ -10,9 +10,10 @@ const PORT = process.env.PORT || 3000;
 app.use(express.urlencoded({ extended: true }));
 app.use(requestIp.mw());
 
-// Initialize Database
+// Initialize Database - UPDATED with ALL new columns
 const db = new sqlite3.Database('./anonymous_tracker.db', (err) => {
     if (!err) {
+        // Create links table
         db.run(`CREATE TABLE IF NOT EXISTS links (
             id TEXT PRIMARY KEY, 
             target_url TEXT, 
@@ -20,6 +21,8 @@ const db = new sqlite3.Database('./anonymous_tracker.db', (err) => {
             created_at TEXT DEFAULT CURRENT_TIMESTAMP,
             click_count INTEGER DEFAULT 0
         )`);
+        
+        // Create visitors table with ALL columns
         db.run(`CREATE TABLE IF NOT EXISTS visitors (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             link_id TEXT, 
@@ -35,17 +38,34 @@ const db = new sqlite3.Database('./anonymous_tracker.db', (err) => {
             device_type TEXT,
             os TEXT,
             browser TEXT,
-            screen_resolution TEXT,
-            language TEXT,
-            timezone TEXT,
             is_bot INTEGER DEFAULT 0,
             bot_name TEXT,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY(link_id) REFERENCES links(id)
         )`);
+        
+        // Add missing columns if they don't exist (for existing databases)
+        const addColumnIfMissing = (column, type) => {
+            db.run(`ALTER TABLE visitors ADD COLUMN ${column} ${type}`, (err) => {
+                if (err && !err.message.includes('duplicate column name')) {
+                    console.log(`Column ${column} already exists or added`);
+                }
+            });
+        };
+        
+        // Try to add any missing columns
+        setTimeout(() => {
+            addColumnIfMissing('traffic_source', 'TEXT');
+            addColumnIfMissing('device_type', 'TEXT');
+            addColumnIfMissing('os', 'TEXT');
+            addColumnIfMissing('browser', 'TEXT');
+            addColumnIfMissing('is_bot', 'INTEGER DEFAULT 0');
+            addColumnIfMissing('bot_name', 'TEXT');
+        }, 1000);
     }
 });
 
-// Bot Detection
+// Bot Detection - IMPROVED
 function detectBot(userAgent) {
     const bots = {
         'Googlebot': ['Googlebot', 'Google-InspectionTool'],
@@ -63,26 +83,12 @@ function detectBot(userAgent) {
         'Apple': ['Applebot'],
         'Baidu': ['Baiduspider'],
         'Yandex': ['YandexBot'],
-        'Sogou': ['Sogou'],
-        'Exabot': ['Exabot'],
         'Ahrefs': ['AhrefsBot'],
         'Semrush': ['SemrushBot'],
-        'Majestic': ['MJ12bot'],
-        'Screaming Frog': ['Screaming Frog'],
-        'Pingdom': ['Pingdom'],
-        'UptimeRobot': ['UptimeRobot'],
-        'Site24x7': ['Site24x7'],
-        'NewRelic': ['NewRelic'],
-        'Cloudflare': ['Cloudflare'],
         'Headless': ['Headless', 'PhantomJS', 'Selenium', 'Puppeteer'],
         'Curl': ['curl'],
         'Wget': ['Wget'],
-        'Python': ['Python-urllib', 'Python Requests'],
-        'Java': ['Java'],
-        'Ruby': ['Ruby'],
-        'Go': ['Go-http-client'],
-        'Node': ['Node.js', 'node-fetch'],
-        'Nmap': ['Nmap', 'masscan']
+        'Python': ['Python-urllib', 'Python Requests']
     };
 
     if (!userAgent) return { isBot: false, botName: null };
@@ -103,7 +109,7 @@ function detectBot(userAgent) {
     return { isBot: false, botName: null };
 }
 
-// Traffic Source Detection
+// Traffic Source Detection - IMPROVED
 function detectTrafficSource(referer) {
     if (!referer || referer === 'Direct') return 'Direct';
 
@@ -128,8 +134,7 @@ function detectTrafficSource(referer) {
         'Quora': ['quora.com'],
         'StackOverflow': ['stackoverflow.com'],
         'GitHub': ['github.com'],
-        'ProductHunt': ['producthunt.com'],
-        'HackerNews': ['news.ycombinator.com']
+        'ProductHunt': ['producthunt.com']
     };
 
     try {
@@ -147,7 +152,7 @@ function detectTrafficSource(referer) {
     }
 }
 
-// User-Agent Parser
+// User-Agent Parser - IMPROVED
 function parseUserAgent(userAgentStr) {
     if (!userAgentStr) return { device: 'Unknown', os: 'Unknown', browser: 'Unknown' };
     
@@ -155,21 +160,22 @@ function parseUserAgent(userAgentStr) {
         const ua = useragent.parse(userAgentStr);
         
         let device = 'Desktop';
-        if (ua.device.family !== 'Other') {
-            if (ua.device.family.includes('iPhone') || ua.device.family.includes('iPad') || 
-                ua.device.family.includes('Android') || ua.device.family.includes('Mobile')) {
+        const family = ua.device.family || '';
+        if (family !== 'Other') {
+            if (family.includes('iPhone') || family.includes('iPad') || 
+                family.includes('Android') || family.includes('Mobile')) {
                 device = 'Mobile';
-            } else if (ua.device.family.includes('Tablet')) {
+            } else if (family.includes('Tablet')) {
                 device = 'Tablet';
-            } else {
-                device = ua.device.family;
+            } else if (family) {
+                device = family;
             }
         }
 
         return {
             device: device,
-            os: ua.os.family + ' ' + (ua.os.major || ''),
-            browser: ua.family + ' ' + (ua.major || '')
+            os: (ua.os.family || 'Unknown') + ' ' + (ua.os.major || ''),
+            browser: (ua.family || 'Unknown') + ' ' + (ua.major || '')
         };
     } catch {
         return { device: 'Unknown', os: 'Unknown', browser: 'Unknown' };
@@ -303,7 +309,7 @@ app.post('/generate', (req, res) => {
     });
 });
 
-// Tracking Endpoint
+// Tracking Endpoint - UPDATED with ALL data
 app.get('/v/:id', async (req, res) => {
     const linkId = req.params.id;
     let clientIp = req.clientIp; 
@@ -355,6 +361,7 @@ app.get('/v/:id', async (req, res) => {
         const trafficSource = detectTrafficSource(referer);
         const parsedUA = parseUserAgent(userAgent);
 
+        // Insert with ALL columns
         db.run(`INSERT INTO visitors (
             link_id, timestamp, ip, country, city, region, isp, user_agent, referer, 
             traffic_source, device_type, os, browser, is_bot, bot_name
@@ -365,7 +372,9 @@ app.get('/v/:id', async (req, res) => {
                 botInfo.isBot ? 1 : 0, botInfo.botName
             ], 
             (err) => {
-                if (err) console.error("Failed to save visitor data:", err);
+                if (err) {
+                    console.error("Failed to save visitor data:", err);
+                }
                 res.redirect(row.target_url);
             }
         );
@@ -375,7 +384,7 @@ app.get('/v/:id', async (req, res) => {
     }
 });
 
-// Results Page
+// Results Page - UPDATED with ALL columns
 app.get('/results/:trackingId', (req, res) => {
     const trackingId = req.params.trackingId;
 
@@ -423,12 +432,13 @@ app.get('/results/:trackingId', (req, res) => {
                 <tr style="border-bottom:1px solid #eee;">
                     <td style="padding:8px; font-size:12px;">${new Date(v.timestamp).toLocaleString()}</td>
                     <td style="padding:8px; color:#d63031; font-weight:bold; font-size:13px;">${v.ip}</td>
-                    <td style="padding:8px; font-size:12px;">${v.city}, ${v.region}<br><span style="color:#666;font-size:11px;">${v.country}</span></td>
-                    <td style="padding:8px; color:#555; font-size:12px;">${v.isp}</td>
+                    <td style="padding:8px; font-size:12px;">${v.city || 'Unknown'}, ${v.region || ''}<br><span style="color:#666;font-size:11px;">${v.country || 'Unknown'}</span></td>
+                    <td style="padding:8px; color:#555; font-size:12px;">${v.isp || 'Unknown'}</td>
                     <td style="padding:8px; font-size:12px;">${v.device_type || 'Unknown'}<br><span style="color:#888;font-size:10px;">${v.os || ''}</span></td>
                     <td style="padding:8px; font-size:12px; color:#666;">${v.browser || 'Unknown'}</td>
                     <td style="padding:8px; font-size:12px; font-weight:bold; color:#2980b9;">${v.traffic_source || 'Direct'}</td>
                     <td style="padding:8px; text-align:center; font-size:12px;">${botBadge}</td>
+                    <td style="padding:8px; font-size:11px; color:#888; max-width:100px; word-break:break-all;">${v.referer || 'Direct'}</td>
                 </tr>`;
             }).join('');
 
@@ -441,7 +451,7 @@ app.get('/results/:trackingId', (req, res) => {
                     <style>
                         * { box-sizing: border-box; }
                         body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif; background: #f5f5f5; margin: 0; padding: 20px; }
-                        .container { max-width: 1300px; margin: 0 auto; background: white; padding: 30px; border-radius: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
+                        .container { max-width: 1400px; margin: 0 auto; background: white; padding: 30px; border-radius: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
                         h2 { color: #1a1a1a; margin-top: 0; }
                         .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 15px; margin: 20px 0; }
                         .stat-card { background: #f8f9fa; padding: 15px; border-radius: 8px; text-align: center; }
@@ -450,8 +460,9 @@ app.get('/results/:trackingId', (req, res) => {
                         .stat-card .number.green { color: #00a854; }
                         .stat-card .number.orange { color: #e17055; }
                         .stat-card .number.red { color: #e74c3c; }
-                        table { width: 100%; border-collapse: collapse; margin-top: 20px; font-size: 13px; }
-                        th { background: #f4f4f4; padding: 10px; text-align: left; font-weight: 600; border-bottom: 2px solid #ddd; }
+                        .stat-card .number.purple { color: #8e44ad; }
+                        table { width: 100%; border-collapse: collapse; margin-top: 20px; font-size: 12px; }
+                        th { background: #f4f4f4; padding: 10px; text-align: left; font-weight: 600; border-bottom: 2px solid #ddd; position: sticky; top: 0; }
                         td { padding: 10px; border-bottom: 1px solid #eee; }
                         tr:hover { background: #fafafa; }
                         .source-badges { margin: 20px 0; padding: 15px; background: #f8f9fa; border-radius: 8px; }
@@ -459,8 +470,9 @@ app.get('/results/:trackingId', (req, res) => {
                         .back-link:hover { text-decoration: underline; }
                         @media (max-width: 768px) {
                             .container { padding: 15px; }
-                            table { font-size: 11px; }
+                            table { font-size: 10px; }
                             td, th { padding: 6px; }
+                            .stats-grid { grid-template-columns: repeat(2, 1fr); }
                         }
                     </style>
                 </head>
@@ -486,7 +498,11 @@ app.get('/results/:trackingId', (req, res) => {
                             </div>
                             <div class="stat-card">
                                 <div class="number red">${botVisits.length}</div>
-                                <div class="label">🤖 Bots</div>
+                                <div class="label">🤖 Bots Detected</div>
+                            </div>
+                            <div class="stat-card">
+                                <div class="number purple">${Object.keys(sourceStats).length}</div>
+                                <div class="label">Traffic Sources</div>
                             </div>
                         </div>
 
@@ -508,10 +524,11 @@ app.get('/results/:trackingId', (req, res) => {
                                         <th>Browser</th>
                                         <th>Source</th>
                                         <th>Bot Status</th>
+                                        <th>Referer</th>
                                     </tr>
                                 </thead>
                                 <tbody>
-                                    ${logRows || '<tr><td colspan="8" style="text-align:center; padding:40px;">🤔 Nobody has clicked your link yet!</td></tr>'}
+                                    ${logRows || '<tr><td colspan="9" style="text-align:center; padding:40px;">🤔 Nobody has clicked your link yet!</td></tr>'}
                                 </tbody>
                             </table>
                         </div>
