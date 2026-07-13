@@ -38,14 +38,14 @@ const db = new sqlite3.Database('./anonymous_tracker.db', (err) => {
             screen_resolution TEXT,
             language TEXT,
             timezone TEXT,
-            is_bot BOOLEAN DEFAULT 0,
+            is_bot INTEGER DEFAULT 0,
             bot_name TEXT,
             FOREIGN KEY(link_id) REFERENCES links(id)
         )`);
     }
 });
 
-// Enhanced Bot Detection
+// Bot Detection
 function detectBot(userAgent) {
     const bots = {
         'Googlebot': ['Googlebot', 'Google-InspectionTool'],
@@ -95,7 +95,6 @@ function detectBot(userAgent) {
         }
     }
 
-    // Check for common bot indicators
     if (userAgent.includes('bot') || userAgent.includes('crawler') || 
         userAgent.includes('spider') || userAgent.includes('scraper')) {
         return { isBot: true, botName: 'Generic Bot' };
@@ -104,76 +103,80 @@ function detectBot(userAgent) {
     return { isBot: false, botName: null };
 }
 
-// Enhanced Traffic Source Detection
+// Traffic Source Detection
 function detectTrafficSource(referer) {
     if (!referer || referer === 'Direct') return 'Direct';
 
     const sources = {
-        'google': ['google.com', 'google.', 'google.co'],
-        'bing': ['bing.com', 'bing.'],
-        'yahoo': ['yahoo.com', 'yahoo.'],
-        'duckduckgo': ['duckduckgo.com'],
-        'facebook': ['facebook.com', 'fb.com', 'fb.me', 'l.instagram.com'],
-        'instagram': ['instagram.com', 'instagr.am'],
-        'twitter': ['twitter.com', 't.co', 'x.com'],
-        'linkedin': ['linkedin.com', 'lnkd.in'],
-        'youtube': ['youtube.com', 'youtu.be'],
-        'pinterest': ['pinterest.com', 'pin.it'],
-        'reddit': ['reddit.com', 'redd.it'],
-        'tiktok': ['tiktok.com', 'vm.tiktok.com'],
-        'whatsapp': ['whatsapp.com', 'wa.me'],
-        'telegram': ['telegram.org', 't.me'],
-        'discord': ['discord.com', 'discord.gg'],
-        'slack': ['slack.com'],
-        'medium': ['medium.com'],
-        'quora': ['quora.com'],
-        'stackoverflow': ['stackoverflow.com'],
-        'github': ['github.com'],
-        'producthunt': ['producthunt.com'],
-        'hackernews': ['news.ycombinator.com'],
-        'baidu': ['baidu.com'],
-        'yandex': ['yandex.com']
+        'Google': ['google.com', 'google.', 'google.co'],
+        'Bing': ['bing.com', 'bing.'],
+        'Yahoo': ['yahoo.com', 'yahoo.'],
+        'DuckDuckGo': ['duckduckgo.com'],
+        'Facebook': ['facebook.com', 'fb.com', 'fb.me'],
+        'Instagram': ['instagram.com', 'instagr.am'],
+        'Twitter': ['twitter.com', 't.co', 'x.com'],
+        'LinkedIn': ['linkedin.com', 'lnkd.in'],
+        'YouTube': ['youtube.com', 'youtu.be'],
+        'Pinterest': ['pinterest.com', 'pin.it'],
+        'Reddit': ['reddit.com', 'redd.it'],
+        'TikTok': ['tiktok.com', 'vm.tiktok.com'],
+        'WhatsApp': ['whatsapp.com', 'wa.me'],
+        'Telegram': ['telegram.org', 't.me'],
+        'Discord': ['discord.com', 'discord.gg'],
+        'Slack': ['slack.com'],
+        'Medium': ['medium.com'],
+        'Quora': ['quora.com'],
+        'StackOverflow': ['stackoverflow.com'],
+        'GitHub': ['github.com'],
+        'ProductHunt': ['producthunt.com'],
+        'HackerNews': ['news.ycombinator.com']
     };
 
-    const domain = new URL(referer).hostname.toLowerCase();
-    for (const [source, patterns] of Object.entries(sources)) {
-        for (const pattern of patterns) {
-            if (domain.includes(pattern)) {
-                return source.charAt(0).toUpperCase() + source.slice(1);
+    try {
+        const domain = new URL(referer).hostname.toLowerCase();
+        for (const [source, patterns] of Object.entries(sources)) {
+            for (const pattern of patterns) {
+                if (domain.includes(pattern)) {
+                    return source;
+                }
             }
         }
+        return 'Website';
+    } catch {
+        return 'Unknown';
     }
-
-    // If it's from a website but not in our list
-    return 'Website';
 }
 
-// Enhanced User-Agent Parser
-function parseUserAgent(userAgent) {
-    if (!userAgent) return { device: 'Unknown', os: 'Unknown', browser: 'Unknown' };
+// User-Agent Parser
+function parseUserAgent(userAgentStr) {
+    if (!userAgentStr) return { device: 'Unknown', os: 'Unknown', browser: 'Unknown' };
     
-    const ua = useragent.parse(userAgent);
-    
-    let device = 'Desktop';
-    if (ua.device.family !== 'Other') {
-        if (ua.device.family.includes('iPhone') || ua.device.family.includes('iPad') || 
-            ua.device.family.includes('Android') || ua.device.family.includes('Mobile')) {
-            device = 'Mobile';
-        } else if (ua.device.family.includes('Tablet')) {
-            device = 'Tablet';
-        } else {
-            device = ua.device.family;
+    try {
+        const ua = useragent.parse(userAgentStr);
+        
+        let device = 'Desktop';
+        if (ua.device.family !== 'Other') {
+            if (ua.device.family.includes('iPhone') || ua.device.family.includes('iPad') || 
+                ua.device.family.includes('Android') || ua.device.family.includes('Mobile')) {
+                device = 'Mobile';
+            } else if (ua.device.family.includes('Tablet')) {
+                device = 'Tablet';
+            } else {
+                device = ua.device.family;
+            }
         }
-    }
 
-    return {
-        device: device,
-        os: ua.os.family + ' ' + (ua.os.major || ''),
-        browser: ua.family + ' ' + (ua.major || '')
-    };
+        return {
+            device: device,
+            os: ua.os.family + ' ' + (ua.os.major || ''),
+            browser: ua.family + ' ' + (ua.major || '')
+        };
+    } catch {
+        return { device: 'Unknown', os: 'Unknown', browser: 'Unknown' };
+    }
 }
 
-// 1. The Generator Page
+// Home Page
 app.get('/', (req, res) => {
     res.send(`
         <!DOCTYPE html>
@@ -186,9 +189,9 @@ app.get('/', (req, res) => {
                 body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif; background: #f5f5f5; margin: 0; padding: 20px; }
                 .container { max-width: 500px; margin: 50px auto; background: white; padding: 40px; border-radius: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); text-align: center; }
                 h2 { color: #1a1a1a; margin-bottom: 30px; }
-                input[type="url"] { width: 100%; padding: 12px; border: 2px solid #ddd; border-radius: 6px; font-size: 16px; transition: border-color 0.3s; }
+                input[type="url"] { width: 100%; padding: 12px; border: 2px solid #ddd; border-radius: 6px; font-size: 16px; }
                 input[type="url"]:focus { border-color: #0066cc; outline: none; }
-                button { padding: 12px 30px; background: #0066cc; color: white; border: none; border-radius: 6px; font-size: 16px; cursor: pointer; transition: background 0.3s; }
+                button { padding: 12px 30px; background: #0066cc; color: white; border: none; border-radius: 6px; font-size: 16px; cursor: pointer; }
                 button:hover { background: #004d99; }
                 .note { font-size: 14px; color: #666; margin-top: 20px; }
             </style>
@@ -201,14 +204,14 @@ app.get('/', (req, res) => {
                     <br><br>
                     <button type="submit">Create Anonymous Link</button>
                 </form>
-                <p class="note">Track every click with advanced bot detection & traffic source analysis.</p>
+                <p class="note">Track every click with bot detection & traffic analysis</p>
             </div>
         </body>
         </html>
     `);
 });
 
-// 2. Generate Links
+// Generate Links
 app.post('/generate', (req, res) => {
     const targetUrl = req.body.url;
     
@@ -251,20 +254,19 @@ app.post('/generate', (req, res) => {
                     * { box-sizing: border-box; }
                     body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif; background: #f5f5f5; margin: 0; padding: 20px; }
                     .container { max-width: 600px; margin: 50px auto; background: white; padding: 40px; border-radius: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
-                    h3 { color: #1a1a1a; margin-bottom: 30px; }
+                    h3 { color: #1a1a1a; }
                     .link-box { background: #f8f8f8; padding: 12px; border-radius: 6px; margin: 10px 0; border-left: 4px solid #ff4444; }
                     .link-box.green { border-left-color: #00a854; }
                     input[type="text"] { width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 4px; font-size: 14px; background: white; }
-                    .copy-btn { margin-top: 8px; padding: 6px 12px; background: #f0f0f0; border: 1px solid #ddd; border-radius: 4px; cursor: pointer; font-size: 13px; }
+                    .copy-btn { margin-top: 8px; padding: 6px 12px; background: #f0f0f0; border: 1px solid #ddd; border-radius: 4px; cursor: pointer; }
                     .copy-btn:hover { background: #e0e0e0; }
                     .back-link { display: inline-block; margin-top: 20px; color: #0066cc; text-decoration: none; }
                     .back-link:hover { text-decoration: underline; }
-                    .feature-badge { display: inline-block; background: #e8f5e9; color: #2e7d32; padding: 2px 8px; border-radius: 4px; font-size: 11px; margin-left: 5px; }
                 </style>
             </head>
             <body>
                 <div class="container">
-                    <h3>✅ Your Anonymous Link is Generated! <span class="feature-badge">Bot Detection</span></h3>
+                    <h3>✅ Your Anonymous Link is Generated!</h3>
                     
                     <p><strong>🔗 Send this link to your target:</strong></p>
                     <div class="link-box">
@@ -301,17 +303,13 @@ app.post('/generate', (req, res) => {
     });
 });
 
-// 3. Enhanced Tracking
+// Tracking Endpoint
 app.get('/v/:id', async (req, res) => {
     const linkId = req.params.id;
     let clientIp = req.clientIp; 
     const userAgent = req.headers['user-agent']; 
     const referer = req.headers['referer'] || 'Direct';
     const timestamp = new Date().toISOString();
-
-    // Get additional browser data from query params (if using tracking pixel)
-    const screenResolution = req.query.sr || 'Unknown';
-    const language = req.query.lang || 'Unknown';
 
     if (clientIp === '::1' || clientIp === '127.0.0.1' || clientIp === '::ffff:127.0.0.1') {
         clientIp = '8.8.8.8';
@@ -329,7 +327,6 @@ app.get('/v/:id', async (req, res) => {
             return res.status(404).send(`
                 <div style="font-family:Arial; max-width:500px; margin:50px auto; text-align:center; padding:20px; background:white; border-radius:12px; box-shadow:0 4px 6px rgba(0,0,0,0.1);">
                     <h3 style="color:red;">❌ Link Expired or Invalid</h3>
-                    <p>This tracking link doesn't exist or has expired.</p>
                     <a href="/">← Go Home</a>
                 </div>
             `);
@@ -337,10 +334,7 @@ app.get('/v/:id', async (req, res) => {
 
         db.run(`UPDATE links SET click_count = click_count + 1 WHERE id = ?`, [linkId]);
 
-        let country = "Unknown";
-        let city = "Unknown";
-        let region = "Unknown";
-        let isp = "Unknown";
+        let country = "Unknown", city = "Unknown", region = "Unknown", isp = "Unknown";
 
         try {
             const geoResponse = await axios.get(`http://ip-api.com/json/${clientIp}?fields=status,country,city,regionName,isp`, {
@@ -354,42 +348,34 @@ app.get('/v/:id', async (req, res) => {
                 isp = geoResponse.data.isp || "Unknown";
             }
         } catch (error) {
-            console.error("Geocoding failed for IP:", clientIp, error.message);
+            console.error("Geocoding failed for IP:", clientIp);
         }
 
-        // Enhanced detection
         const botInfo = detectBot(userAgent);
         const trafficSource = detectTrafficSource(referer);
         const parsedUA = parseUserAgent(userAgent);
 
-        // Get timezone from request header (if available)
-        const timezone = req.headers['timezone'] || 'Unknown';
-
         db.run(`INSERT INTO visitors (
             link_id, timestamp, ip, country, city, region, isp, user_agent, referer, 
-            traffic_source, device_type, os, browser, screen_resolution, language, 
-            timezone, is_bot, bot_name
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, 
+            traffic_source, device_type, os, browser, is_bot, bot_name
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, 
             [
                 linkId, timestamp, clientIp, country, city, region, isp, userAgent, referer,
                 trafficSource, parsedUA.device, parsedUA.os, parsedUA.browser,
-                screenResolution, language, timezone,
                 botInfo.isBot ? 1 : 0, botInfo.botName
             ], 
             (err) => {
-                if (err) {
-                    console.error("Failed to save visitor data:", err);
-                }
+                if (err) console.error("Failed to save visitor data:", err);
                 res.redirect(row.target_url);
             }
         );
     } catch (error) {
         console.error("Error processing link:", error);
-        res.status(500).send("An error occurred. Please try again.");
+        res.status(500).send("An error occurred.");
     }
 });
 
-// 4. Enhanced Results Page
+// Results Page
 app.get('/results/:trackingId', (req, res) => {
     const trackingId = req.params.trackingId;
 
@@ -398,7 +384,6 @@ app.get('/results/:trackingId', (req, res) => {
             return res.status(404).send(`
                 <div style="font-family:Arial; max-width:500px; margin:50px auto; text-align:center; padding:20px; background:white; border-radius:12px; box-shadow:0 4px 6px rgba(0,0,0,0.1);">
                     <h3 style="color:red;">❌ Tracking session not found</h3>
-                    <p>This tracking link doesn't exist or has been removed.</p>
                     <a href="/">← Go Home</a>
                 </div>
             `);
@@ -412,49 +397,46 @@ app.get('/results/:trackingId', (req, res) => {
 
             const uniqueIPs = new Set(visitors.map(v => v.ip));
             const uniqueVisitors = uniqueIPs.size;
-            
-            // Count bots
             const botVisits = visitors.filter(v => v.is_bot === 1);
             const humanVisits = visitors.filter(v => v.is_bot === 0);
 
-            // Traffic source stats
             const sourceStats = visitors.reduce((acc, v) => {
                 const source = v.traffic_source || 'Direct';
                 acc[source] = (acc[source] || 0) + 1;
                 return acc;
             }, {});
 
-            let logRows = visitors.map(v => {
-                const botBadge = v.is_bot ? `🤖 <span style="color:#e74c3c;font-weight:bold;">${v.bot_name || 'Bot'}</span>` : '👤 Human';
-                
-                return `
-                <tr style="border-bottom:1px solid #eee;">
-                    <td style="padding:10px; font-size:12px;">${new Date(v.timestamp).toLocaleString()}</td>
-                    <td style="padding:10px; color:#d63031; font-weight:bold; font-size:13px;">${v.ip}</td>
-                    <td style="padding:10px; font-weight:bold; font-size:12px;">${v.city}, ${v.region}<br><span style="font-weight:normal; color:#666;">${v.country}</span></td>
-                    <td style="padding:10px; color:#555; font-size:12px;">${v.isp}</td>
-                    <td style="padding:10px; font-size:12px;">${v.device_type || 'Unknown'}<br><span style="color:#888;font-size:10px;">${v.os || ''}</span></td>
-                    <td style="padding:10px; font-size:12px; color:#666;">${v.browser || 'Unknown'}</td>
-                    <td style="padding:10px; font-size:12px; font-weight:bold; color:#2980b9;">${v.traffic_source || 'Direct'}</td>
-                    <td style="padding:10px; text-align:center; font-size:13px;">${botBadge}</td>
-                    <td style="padding:10px; font-size:10px; color:#888; max-width:100px; word-break:break-all;">${v.referer || 'Direct'}</td>
-                </tr>`;
-            }).join('');
-
-            // Build traffic source badges
             let sourceBadges = '';
             for (const [source, count] of Object.entries(sourceStats)) {
-                const percentage = ((count / visitors.length) * 100).toFixed(1);
+                const percentage = visitors.length > 0 ? ((count / visitors.length) * 100).toFixed(1) : 0;
                 sourceBadges += `<span style="display:inline-block; background:#e8f4fd; padding:5px 12px; border-radius:20px; margin:3px; font-size:13px;">
                     ${source}: ${count} (${percentage}%)
                 </span>`;
             }
 
+            let logRows = visitors.map(v => {
+                const botBadge = v.is_bot ? 
+                    `🤖 <span style="color:#e74c3c;font-weight:bold;">${v.bot_name || 'Bot'}</span>` : 
+                    '👤 Human';
+                
+                return `
+                <tr style="border-bottom:1px solid #eee;">
+                    <td style="padding:8px; font-size:12px;">${new Date(v.timestamp).toLocaleString()}</td>
+                    <td style="padding:8px; color:#d63031; font-weight:bold; font-size:13px;">${v.ip}</td>
+                    <td style="padding:8px; font-size:12px;">${v.city}, ${v.region}<br><span style="color:#666;font-size:11px;">${v.country}</span></td>
+                    <td style="padding:8px; color:#555; font-size:12px;">${v.isp}</td>
+                    <td style="padding:8px; font-size:12px;">${v.device_type || 'Unknown'}<br><span style="color:#888;font-size:10px;">${v.os || ''}</span></td>
+                    <td style="padding:8px; font-size:12px; color:#666;">${v.browser || 'Unknown'}</td>
+                    <td style="padding:8px; font-size:12px; font-weight:bold; color:#2980b9;">${v.traffic_source || 'Direct'}</td>
+                    <td style="padding:8px; text-align:center; font-size:12px;">${botBadge}</td>
+                </tr>`;
+            }).join('');
+
             res.send(`
                 <!DOCTYPE html>
                 <html>
                 <head>
-                    <title>Advanced Traffic Analytics</title>
+                    <title>Traffic Analytics</title>
                     <meta name="viewport" content="width=device-width, initial-scale=1">
                     <style>
                         * { box-sizing: border-box; }
@@ -468,37 +450,26 @@ app.get('/results/:trackingId', (req, res) => {
                         .stat-card .number.green { color: #00a854; }
                         .stat-card .number.orange { color: #e17055; }
                         .stat-card .number.red { color: #e74c3c; }
-                        .stat-card .number.purple { color: #8e44ad; }
                         table { width: 100%; border-collapse: collapse; margin-top: 20px; font-size: 13px; }
-                        th { background: #f4f4f4; padding: 10px; text-align: left; font-weight: 600; color: #333; border-bottom: 2px solid #ddd; position: sticky; top: 0; }
+                        th { background: #f4f4f4; padding: 10px; text-align: left; font-weight: 600; border-bottom: 2px solid #ddd; }
                         td { padding: 10px; border-bottom: 1px solid #eee; }
                         tr:hover { background: #fafafa; }
-                        .empty-state { text-align: center; padding: 40px; color: #666; }
-                        .back-link { display: inline-block; margin-top: 20px; color: #0066cc; text-decoration: none; font-weight: 500; }
-                        .back-link:hover { text-decoration: underline; }
                         .source-badges { margin: 20px 0; padding: 15px; background: #f8f9fa; border-radius: 8px; }
+                        .back-link { display: inline-block; margin-top: 20px; color: #0066cc; text-decoration: none; }
+                        .back-link:hover { text-decoration: underline; }
                         @media (max-width: 768px) {
                             .container { padding: 15px; }
                             table { font-size: 11px; }
                             td, th { padding: 6px; }
-                            .stats-grid { grid-template-columns: repeat(2, 1fr); }
                         }
-                        .bot-badge { display: inline-block; background: #fde8e8; color: #c0392b; padding: 2px 8px; border-radius: 12px; font-size: 11px; font-weight: bold; }
-                        .human-badge { display: inline-block; background: #e8f5e9; color: #2e7d32; padding: 2px 8px; border-radius: 12px; font-size: 11px; font-weight: bold; }
                     </style>
                 </head>
                 <body>
                     <div class="container">
                         <h2>📊 Advanced Traffic Analytics</h2>
-                        <p style="color:#666; margin-bottom:5px;">
-                            <strong>Tracking ID:</strong> ${link.id}
-                        </p>
-                        <p style="color:#666; margin-top:0;">
-                            <strong>Destination:</strong> <a href="${link.target_url}" target="_blank">${link.target_url}</a>
-                        </p>
-                        <p style="color:#666; font-size:13px;">
-                            <strong>Created:</strong> ${new Date(link.created_at).toLocaleString()}
-                        </p>
+                        <p><strong>Tracking ID:</strong> ${link.id}</p>
+                        <p><strong>Destination:</strong> <a href="${link.target_url}" target="_blank">${link.target_url}</a></p>
+                        <p style="font-size:13px; color:#666;"><strong>Created:</strong> ${new Date(link.created_at).toLocaleString()}</p>
                         
                         <div class="stats-grid">
                             <div class="stat-card">
@@ -511,15 +482,11 @@ app.get('/results/:trackingId', (req, res) => {
                             </div>
                             <div class="stat-card">
                                 <div class="number orange">${humanVisits.length}</div>
-                                <div class="label">Human Visitors</div>
+                                <div class="label">👤 Human Visitors</div>
                             </div>
                             <div class="stat-card">
                                 <div class="number red">${botVisits.length}</div>
-                                <div class="label">🤖 Bots Detected</div>
-                            </div>
-                            <div class="stat-card">
-                                <div class="number purple">${Object.keys(sourceStats).length}</div>
-                                <div class="label">Traffic Sources</div>
+                                <div class="label">🤖 Bots</div>
                             </div>
                         </div>
 
@@ -528,8 +495,8 @@ app.get('/results/:trackingId', (req, res) => {
                             ${sourceBadges || 'No data yet'}
                         </div>
                         
-                        <h3 style="margin:30px 0 15px;">📋 Detailed Visitor Log</h3>
-                        <div style="overflow-x:auto; max-height:600px; overflow-y:auto;">
+                        <h3>📋 Visitor Log</h3>
+                        <div style="overflow-x:auto; max-height:500px; overflow-y:auto;">
                             <table>
                                 <thead>
                                     <tr>
@@ -541,11 +508,10 @@ app.get('/results/:trackingId', (req, res) => {
                                         <th>Browser</th>
                                         <th>Source</th>
                                         <th>Bot Status</th>
-                                        <th>Referer</th>
                                     </tr>
                                 </thead>
                                 <tbody>
-                                    ${logRows || '<tr><td colspan="9" class="empty-state">🤔 Nobody has clicked your link yet!</td></tr>'}
+                                    ${logRows || '<tr><td colspan="8" style="text-align:center; padding:40px;">🤔 Nobody has clicked your link yet!</td></tr>'}
                                 </tbody>
                             </table>
                         </div>
@@ -559,7 +525,7 @@ app.get('/results/:trackingId', (req, res) => {
     });
 });
 
-// 5. Health Check
+// Health Check
 app.get('/health', (req, res) => {
     res.json({ 
         status: 'healthy', 
@@ -568,7 +534,7 @@ app.get('/health', (req, res) => {
     });
 });
 
-// 6. Error handling
+// Error handling
 app.use((err, req, res, next) => {
     console.error('Server error:', err);
     res.status(500).send(`
@@ -578,15 +544,6 @@ app.use((err, req, res, next) => {
             <a href="/">← Go Home</a>
         </div>
     `);
-});
-
-// 7. Clean shutdown
-process.on('SIGINT', () => {
-    console.log('Closing database...');
-    db.close(() => {
-        console.log('Database closed.');
-        process.exit(0);
-    });
 });
 
 app.listen(PORT, () => console.log(`🕵️ Advanced tracking server running on port ${PORT}`));
