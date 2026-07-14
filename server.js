@@ -55,6 +55,8 @@ app.get('/', (req, res) => {
                 button:hover { background: #3a70d9; }
                 .features { display: flex; flex-wrap: wrap; gap: 6px; justify-content: center; margin-top: 20px; }
                 .features span { background: rgba(79,140,255,0.12); color: #7aa3ff; padding: 4px 12px; border-radius: 20px; font-size: 11px; }
+                .youtube-link { color: #ff4444; text-decoration: none; font-weight: bold; }
+                .youtube-link:hover { text-decoration: underline; }
             </style>
         </head>
         <body>
@@ -71,6 +73,9 @@ app.get('/', (req, res) => {
                     <span>📱 Device</span>
                     <span>👁️ Every View</span>
                 </div>
+                <p style="margin-top: 20px; font-size: 12px; color: #8892b0;">
+                    📺 <a href="https://www.youtube.com/@Imole_Fx" target="_blank" class="youtube-link">@Imole_Fx on YouTube</a>
+                </p>
             </div>
         </body>
         </html>
@@ -151,7 +156,9 @@ app.post('/generate', (req, res) => {
     });
 });
 
-// Tracking Endpoint
+// ============================================================
+// FIXED TRACKING ENDPOINT - IMMEDIATE REDIRECT
+// ============================================================
 app.get('/v/:id', async (req, res) => {
     const linkId = req.params.id;
     let clientIp = req.clientIp;
@@ -159,20 +166,30 @@ app.get('/v/:id', async (req, res) => {
     const referer = req.headers['referer'] || 'Direct';
     const timestamp = new Date().toISOString();
 
+    // Fix for localhost testing
     if (clientIp === '::1' || clientIp === '127.0.0.1' || clientIp === '::ffff:127.0.0.1') {
         clientIp = '8.8.8.8';
     }
 
-    db.get(`SELECT target_url FROM links WHERE id = ?`, [linkId], async (err, row) => {
-        if (err || !row) {
+    try {
+        // Get the target URL
+        const row = await new Promise((resolve, reject) => {
+            db.get(`SELECT target_url FROM links WHERE id = ?`, [linkId], (err, row) => {
+                if (err) reject(err);
+                else resolve(row);
+            });
+        });
+
+        if (!row) {
             return res.status(404).send(`<h3>❌ Link not found</h3><a href="/">← Home</a>`);
         }
 
+        // Get location data (async, but we don't wait for it to complete before redirect)
         let country = "Unknown", city = "Unknown", region = "Unknown", isp = "Unknown";
-
+        
         try {
             const geoResponse = await axios.get(`http://ip-api.com/json/${clientIp}?fields=status,country,city,regionName,isp`, {
-                timeout: 5000
+                timeout: 3000
             });
             if (geoResponse.data && geoResponse.data.status === 'success') {
                 country = geoResponse.data.country || "Unknown";
@@ -184,15 +201,22 @@ app.get('/v/:id', async (req, res) => {
             console.error("Geocoding failed:", error.message);
         }
 
+        // Save visitor data
         db.run(`INSERT INTO visitors (link_id, timestamp, ip, country, city, region, isp, user_agent, referer) 
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             [linkId, timestamp, clientIp, country, city, region, isp, userAgent, referer],
             (err) => {
                 if (err) console.error("Failed to save visitor:", err);
-                res.redirect(row.target_url);
             }
         );
-    });
+
+        // IMMEDIATE REDIRECT - Don't wait for database to finish
+        return res.redirect(row.target_url);
+
+    } catch (error) {
+        console.error("Error processing link:", error);
+        return res.status(500).send("An error occurred. Please try again.");
+    }
 });
 
 // Results Page
@@ -245,6 +269,8 @@ app.get('/results/:trackingId', (req, res) => {
                         a { color: #4f8cff; text-decoration: none; }
                         a:hover { text-decoration: underline; }
                         .back { display: inline-block; margin-top: 20px; }
+                        .youtube-link { color: #ff4444; text-decoration: none; }
+                        .youtube-link:hover { text-decoration: underline; }
                         @media (max-width: 768px) {
                             .container { padding: 16px; }
                             table { font-size: 10px; }
@@ -283,6 +309,9 @@ app.get('/results/:trackingId', (req, res) => {
                             </table>
                         </div>
                         <a href="/" class="back">← Create New Link</a>
+                        <p style="margin-top: 20px; font-size: 12px; color: #8892b0;">
+                            📺 <a href="https://www.youtube.com/@Imole_Fx" target="_blank" class="youtube-link">@Imole_Fx on YouTube</a>
+                        </p>
                     </div>
                 </body>
                 </html>
